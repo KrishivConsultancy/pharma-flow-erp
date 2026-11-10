@@ -1277,57 +1277,81 @@ export class DatabaseService {
       const d = backup.data;
       if (d.profile) {
         for (const p of d.profile) {
-          this.safeRun(`INSERT INTO company_profile VALUES (${Object.keys(p).map(() => '?').join(',')})`, Object.values(p));
+          this.safeRun(`INSERT OR REPLACE INTO company_profile VALUES (${Object.keys(p).map(() => '?').join(',')})`, Object.values(p));
         }
       }
       if (d.parties) {
         for (const p of d.parties) {
-          this.safeRun(`INSERT INTO parties VALUES (${Object.keys(p).map(() => '?').join(',')})`, Object.values(p));
+          this.safeRun(`INSERT OR REPLACE INTO parties VALUES (${Object.keys(p).map(() => '?').join(',')})`, Object.values(p));
         }
       }
       if (d.medicines) {
+        const seenNames = new Map<string, string>(); // normName -> primaryId
+        const idRemap = new Map<string, string>();   // dupId -> primaryId
+
         for (const m of d.medicines) {
-          this.safeRun(`INSERT INTO medicines_master VALUES (${Object.keys(m).map(() => '?').join(',')})`, Object.values(m));
+          const normName = String(m.name || '').trim().toUpperCase();
+          if (!normName) continue;
+
+          if (seenNames.has(normName)) {
+            // Deduplicate: Map this duplicate ID to the primary canonical ID
+            idRemap.set(m.id, seenNames.get(normName)!);
+          } else {
+            seenNames.set(normName, m.id);
+            this.safeRun(
+              `INSERT OR REPLACE INTO medicines_master VALUES (${Object.keys(m).map(() => '?').join(',')})`,
+              Object.values(m)
+            );
+          }
+        }
+
+        // Remap any inventory batch pointing to a duplicate medicine ID
+        if (idRemap.size > 0 && Array.isArray(d.batches)) {
+          for (const b of d.batches) {
+            if (idRemap.has(b.medicine_id)) {
+              b.medicine_id = idRemap.get(b.medicine_id);
+            }
+          }
         }
       }
       if (d.batches) {
         for (const b of d.batches) {
-          this.safeRun(`INSERT INTO inventory_batches VALUES (${Object.keys(b).map(() => '?').join(',')})`, Object.values(b));
+          this.safeRun(`INSERT OR REPLACE INTO inventory_batches VALUES (${Object.keys(b).map(() => '?').join(',')})`, Object.values(b));
         }
       }
       if (d.purchases) {
         for (const p of d.purchases) {
-          this.safeRun(`INSERT INTO purchases VALUES (${Object.keys(p).map(() => '?').join(',')})`, Object.values(p));
+          this.safeRun(`INSERT OR REPLACE INTO purchases VALUES (${Object.keys(p).map(() => '?').join(',')})`, Object.values(p));
         }
       }
       if (d.purchaseItems) {
         for (const pi of d.purchaseItems) {
-          this.safeRun(`INSERT INTO purchase_items VALUES (${Object.keys(pi).map(() => '?').join(',')})`, Object.values(pi));
+          this.safeRun(`INSERT OR REPLACE INTO purchase_items VALUES (${Object.keys(pi).map(() => '?').join(',')})`, Object.values(pi));
         }
       }
       if (d.sales) {
         for (const s of d.sales) {
-          this.safeRun(`INSERT INTO sales VALUES (${Object.keys(s).map(() => '?').join(',')})`, Object.values(s));
+          this.safeRun(`INSERT OR REPLACE INTO sales VALUES (${Object.keys(s).map(() => '?').join(',')})`, Object.values(s));
         }
       }
       if (d.saleItems) {
         for (const si of d.saleItems) {
-          this.safeRun(`INSERT INTO sale_items VALUES (${Object.keys(si).map(() => '?').join(',')})`, Object.values(si));
+          this.safeRun(`INSERT OR REPLACE INTO sale_items VALUES (${Object.keys(si).map(() => '?').join(',')})`, Object.values(si));
         }
       }
       if (d.adjustments) {
         for (const a of d.adjustments) {
-          this.safeRun(`INSERT INTO returns_adjustments VALUES (${Object.keys(a).map(() => '?').join(',')})`, Object.values(a));
+          this.safeRun(`INSERT OR REPLACE INTO returns_adjustments VALUES (${Object.keys(a).map(() => '?').join(',')})`, Object.values(a));
         }
       }
       if (d.ledger) {
         for (const l of d.ledger) {
-          this.safeRun(`INSERT INTO party_ledger_transactions VALUES (${Object.keys(l).map(() => '?').join(',')})`, Object.values(l));
+          this.safeRun(`INSERT OR REPLACE INTO party_ledger_transactions VALUES (${Object.keys(l).map(() => '?').join(',')})`, Object.values(l));
         }
       }
       if (d.customerRates) {
         for (const cr of d.customerRates) {
-          this.safeRun(`INSERT INTO customer_rate_memory VALUES (${Object.keys(cr).map(() => '?').join(',')})`, Object.values(cr));
+          this.safeRun(`INSERT OR REPLACE INTO customer_rate_memory VALUES (${Object.keys(cr).map(() => '?').join(',')})`, Object.values(cr));
         }
       }
 
