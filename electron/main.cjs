@@ -339,8 +339,16 @@ ipcMain.handle('updater:install', () => {
     console.warn('Error closing windows prior to update:', err.message);
   }
 
-  // Allow OS 500ms to release file handles, then run silent update and relaunch
+  // Allow OS 300ms to release file handles, then run silent update and force exit
   setTimeout(() => {
-    autoUpdater.quitAndInstall(true, true);
-  }, 500);
+    try {
+      autoUpdater.quitAndInstall(true, true);
+    } catch (e) {
+      console.warn('quitAndInstall error:', e);
+    }
+    // Force terminate process tree so Windows immediately releases executable locks
+    setTimeout(() => {
+      app.exit(0);
+    }, 500);
+  }, 300);
 });

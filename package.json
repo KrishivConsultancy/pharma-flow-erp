@@ -1,6 +1,6 @@
 {
   "name": "pharma-flow-erp",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "description": "Enterprise-Grade Offline-First Pharmaceutical Distribution ERP & Wholesale Billing Engine",
   "main": "electron/main.cjs",
   "type": "module",
@@ -35,11 +35,13 @@
       "artifactName": "Radha-Drugs-ERP-Setup.${ext}"
     },
     "nsis": {
-      "oneClick": false,
-      "allowToChangeInstallationDirectory": true,
+      "oneClick": true,
+      "perMachine": false,
+      "allowElevation": true,
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true,
-      "shortcutName": "Radha Drugs ERP"
+      "shortcutName": "Radha Drugs ERP",
+      "deleteAppDataOnUninstall": false
     },
     "publish": {
       "provider": "github",
