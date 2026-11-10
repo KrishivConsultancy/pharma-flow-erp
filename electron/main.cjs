@@ -207,6 +207,16 @@ ipcMain.handle('lookup-gstin', async (event, { gstin, cashfreeClientId, cashfree
             gst_status: status === 'ACTIVE' || status === 'VALID' ? 'ACTIVE' : 'CANCELLED',
           },
         };
+      } else {
+        const errJson = await res.json().catch(() => ({}));
+        console.warn('Cashfree API responded with status:', res.status, errJson);
+        if (errJson && errJson.code === 'ip_validation_failed') {
+          return {
+            ok: false,
+            error: errJson.message || 'Cashfree IP not whitelisted',
+            isIpError: true,
+          };
+        }
       }
     } catch (cfErr) {
       console.warn('Tier 1 Cashfree lookup failed in Node process:', cfErr.message);

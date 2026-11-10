@@ -210,6 +210,11 @@ export class CashfreeGstinService {
             pan: offlineFallback.pan,
             message: `Verified live via ${ipcRes.source === 'CASHFREE_LIVE' ? 'Cashfree Verification API' : 'Public GST Directory'}`,
           };
+        } else if (ipcRes && ipcRes.isIpError) {
+          return {
+            ...offlineFallback,
+            message: ipcRes.error,
+          };
         }
       } catch (ipcErr) {
         console.warn('Electron IPC lookup failed, attempting web fetch:', ipcErr);
@@ -259,6 +264,14 @@ export class CashfreeGstinService {
             pan: offlineFallback.pan,
             message: 'Verified live via Cashfree Verification API (VRS v2)',
           };
+        } else {
+          const errData = await response.json().catch(() => ({}));
+          if (errData && errData.code === 'ip_validation_failed') {
+            return {
+              ...offlineFallback,
+              message: errData.message,
+            };
+          }
         }
       } catch (err) {
         console.warn('Direct Cashfree fetch failed:', err);

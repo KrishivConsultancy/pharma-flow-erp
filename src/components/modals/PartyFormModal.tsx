@@ -115,9 +115,13 @@ export const PartyFormModal: React.FC<PartyFormModalProps> = ({
         if (res.state_name) setStateName(res.state_name);
         if (res.state_code) setStateCode(res.state_code);
 
+        const isIpBlock = Boolean(res.message && (res.message.includes('IP not whitelisted') || res.message.includes('ip_validation_failed')));
+
         setGstinFeedback({
-          type: 'success',
-          message: res.trade_name
+          type: isIpBlock ? 'error' : (res.trade_name ? 'success' : 'info'),
+          message: (isIpBlock && res.message)
+            ? res.message
+            : res.trade_name
             ? `Verified: ${res.trade_name} (${res.source.replace('_', ' ')})`
             : `State & PAN Extracted: ${res.state_name} | ${res.pan} (${res.constitution}). Please type Trade Name below.`,
         });
