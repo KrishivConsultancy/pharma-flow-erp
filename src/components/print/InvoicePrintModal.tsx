@@ -49,6 +49,26 @@ export const InvoicePrintModal: React.FC<InvoicePrintModalProps> = ({
 
   if (!isOpen || !sale) return null;
 
+  const handleDownloadPdf = async () => {
+    if ((window as any).electronAPI?.exportInvoicePdf) {
+      try {
+        const res = await (window as any).electronAPI.exportInvoicePdf({
+          invoiceNo: sale.invoice_no,
+          isHalfPage: layout === 'half',
+        });
+        if (res.success) {
+          alert(`✅ Invoice PDF saved to:\n${res.filePath}`);
+        } else if (!res.cancelled) {
+          alert(`Failed to save PDF: ${res.error}`);
+        }
+      } catch (err: any) {
+        alert(`PDF export error: ${err.message}`);
+      }
+    } else {
+      window.print();
+    }
+  };
+
   const handlePrint = () => {
     window.print();
   };
@@ -122,6 +142,15 @@ export const InvoicePrintModal: React.FC<InvoicePrintModalProps> = ({
             <span>WhatsApp</span>
           </button>
 
+          {/* Download PDF Button */}
+          <button
+            onClick={handleDownloadPdf}
+            className="px-3.5 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold rounded-sm flex items-center space-x-1.5 transition-colors shadow-sm"
+          >
+            <Download className="w-3.5 h-3.5" />
+            <span>Download PDF</span>
+          </button>
+
           {/* Print Button */}
           <button
             onClick={handlePrint}
@@ -145,7 +174,7 @@ export const InvoicePrintModal: React.FC<InvoicePrintModalProps> = ({
 
       {/* Main Print Stage */}
       <div className="flex-1 overflow-auto p-6 flex justify-center items-start bg-slate-800/60 print:bg-white print:p-0">
-        <div className="bg-white shadow-2xl print:shadow-none print:w-full">
+        <div id="printable-invoice-area" className="bg-white shadow-2xl print:shadow-none print:w-full">
           {sale.bill_type === 'GST_INVOICE' ? (
             <GstTaxInvoiceTemplate company={company} sale={sale} items={items} layout={layout} />
           ) : (

@@ -1,7 +1,7 @@
 // Party Registration Modal: GST Registered (Cashfree Auto-Fetch) + Non-GST Unregistered
 // Instant onboarding for retail chemists, doctors, and pharmaceutical vendors
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { X, Zap, CheckCircle2, AlertCircle, Building2, User, Phone, MapPin, FileCheck } from 'lucide-react';
 import { Party, PartyType } from '../../db/schema';
 import { cashfreeService, GST_STATE_MAP } from '../../services/cashfreeService';
@@ -40,6 +40,8 @@ export const PartyFormModal: React.FC<PartyFormModalProps> = ({
   const [isLoadingGstin, setIsLoadingGstin] = useState<boolean>(false);
   const [gstinFeedback, setGstinFeedback] = useState<{ type: 'success' | 'error' | 'info'; message: string } | null>(null);
 
+  const nameInputRef = useRef<HTMLInputElement>(null);
+
   useEffect(() => {
     if (initialParty) {
       setPartyType(initialParty.party_type);
@@ -76,31 +78,53 @@ export const PartyFormModal: React.FC<PartyFormModalProps> = ({
     }
   }, [isOpen, initialParty, defaultPartyType]);
 
-  // Handle GSTIN live lookup via Cashfree service
-  const handleAutoFetchGstin = async () => {
-    const cleanGstin = gstin.trim().toUpperCase();
-    if (!cleanGstin) {
+  // Handle GSTIN live lookup via Multi-Tier Cashfree / Public service
+  const handleAutoFetchGstin = async (gstinToFetch?: string) => {
+    const cleanGstin = (gstinToFetch || gstin).trim().toUpperCase();
+    if (!cleanGstin || cleanGstin.length < 2) {
       setGstinFeedback({ type: 'error', message: 'Please enter a 15-character GSTIN number' });
       return;
     }
 
+    // Instant Tier 3 Extraction
+    const offline = cashfreeService.extractOfflineDetails(cleanGstin);
+    setStateName(offline.state_name);
+    setStateCode(offline.state_code);
+    if (!city || city === 'BEGUSARAI') {
+      setCity(offline.city || 'BEGUSARAI');
+    }
+
+    if (cleanGstin.length !== 15) {
+      setGstinFeedback({
+        type: 'info',
+        message: `State resolved: ${offline.state_name} (${offline.state_code}). Enter all 15 characters to fetch registered Trade Name.`,
+      });
+      return;
+    }
+
     setIsLoadingGstin(true);
-    setGstinFeedback({ type: 'info', message: 'Fetching registered GST particulars...' });
+    setGstinFeedback({ type: 'info', message: 'Connecting to GSTIN verification directory...' });
 
     try {
       const res = await cashfreeService.verifyGstin(cleanGstin);
       if (res.valid) {
-        setName(res.trade_name || res.legal_name);
-        setLegalName(res.legal_name || res.trade_name);
-        setAddress(res.address);
-        setCity(res.city || 'BEGUSARAI');
-        setStateName(res.state_name);
-        setStateCode(res.state_code);
+        if (res.trade_name) setName(res.trade_name);
+        if (res.legal_name) setLegalName(res.legal_name);
+        if (res.address) setAddress(res.address);
+        if (res.city) setCity(res.city);
+        if (res.state_name) setStateName(res.state_name);
+        if (res.state_code) setStateCode(res.state_code);
 
         setGstinFeedback({
           type: 'success',
-          message: `${res.message || 'Details retrieved!'} (${res.source.replace('_', ' ')})`,
+          message: res.trade_name
+            ? `Verified: ${res.trade_name} (${res.source.replace('_', ' ')})`
+            : `State & PAN Extracted: ${res.state_name} | ${res.pan} (${res.constitution}). Please type Trade Name below.`,
         });
+
+        if (!res.trade_name) {
+          setTimeout(() => nameInputRef.current?.focus(), 100);
+        }
       } else {
         setGstinFeedback({
           type: 'error',
@@ -112,8 +136,24 @@ export const PartyFormModal: React.FC<PartyFormModalProps> = ({
         type: 'error',
         message: err.message || 'GSTIN fetch failed',
       });
+      setTimeout(() => nameInputRef.current?.focus(), 100);
     } finally {
       setIsLoadingGstin(false);
+    }
+  };
+
+  const handleGstinInputChange = (val: string) => {
+    const clean = val.toUpperCase().trim();
+    setGstin(clean);
+    if (clean.length === 15) {
+      handleAutoFetchGstin(clean);
+    } else if (clean.length >= 2) {
+      const code = clean.substring(0, 2);
+      const name = GST_STATE_MAP[code];
+      if (name) {
+        setStateName(name);
+        setStateCode(code);
+      }
     }
   };
 
@@ -121,6 +161,7 @@ export const PartyFormModal: React.FC<PartyFormModalProps> = ({
     e.preventDefault();
     if (!name.trim()) {
       alert('Please enter party name / shop name.');
+      nameInputRef.current?.focus();
       return;
     }
 
@@ -206,7 +247,7 @@ export const PartyFormModal: React.FC<PartyFormModalProps> = ({
                       : 'bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-300 border-slate-300 dark:border-slate-600'
                   }`}
                 >
-                  Vendor (Pharma Company)
+                  Vendor (Pharma Wholesaler / Co.)
                 </button>
               </div>
             </div>
@@ -250,25 +291,25 @@ export const PartyFormModal: React.FC<PartyFormModalProps> = ({
           {isGstRegistered === 1 && (
             <div className="p-3 bg-sky-50 dark:bg-sky-950/30 border border-sky-300 dark:border-sky-800 rounded-sm">
               <label className="block font-bold text-slate-800 dark:text-slate-200 mb-1">
-                15-Digit GSTIN Number (e.g. 10BTCPS4963A1Z2)
+                15-Digit GSTIN Number (Auto-fetches on 15 chars)
               </label>
               <div className="flex space-x-2">
                 <input
                   type="text"
                   maxLength={15}
                   value={gstin}
-                  onChange={(e) => setGstin(e.target.value.toUpperCase())}
-                  placeholder="Enter 15-char GSTIN"
-                  className="flex-1 px-3 py-1.5 font-mono text-sm uppercase font-bold border border-slate-300 dark:border-slate-600 dark:bg-slate-800"
+                  onChange={(e) => handleGstinInputChange(e.target.value)}
+                  placeholder="e.g. 10BTCPS4963A1Z2"
+                  className="flex-1 px-3 py-1.5 font-mono text-sm uppercase font-bold border border-slate-300 dark:border-slate-600 dark:bg-slate-800 focus:ring-2 focus:ring-sky-500"
                 />
                 <button
                   type="button"
-                  onClick={handleAutoFetchGstin}
+                  onClick={() => handleAutoFetchGstin()}
                   disabled={isLoadingGstin}
-                  className="px-4 py-1.5 bg-sky-600 hover:bg-sky-500 text-white font-bold rounded-sm flex items-center space-x-1.5 shadow-sm disabled:opacity-50"
+                  className="px-4 py-1.5 bg-sky-600 hover:bg-sky-500 text-white font-bold rounded-sm flex items-center space-x-1.5 shadow-sm disabled:opacity-50 cursor-pointer"
                 >
                   <Zap className="w-4 h-4 fill-current" />
-                  <span>{isLoadingGstin ? 'Fetching...' : '⚡ Auto-Fetch GST'}</span>
+                  <span>{isLoadingGstin ? 'Verifying...' : '⚡ Verify GSTIN'}</span>
                 </button>
               </div>
 
@@ -276,16 +317,16 @@ export const PartyFormModal: React.FC<PartyFormModalProps> = ({
                 <div
                   className={`mt-2 p-2 rounded-sm text-xs font-semibold flex items-center space-x-1.5 ${
                     gstinFeedback.type === 'success'
-                      ? 'bg-emerald-100 text-emerald-800 border border-emerald-300'
+                      ? 'bg-emerald-100 text-emerald-800 border border-emerald-300 dark:bg-emerald-950/60 dark:text-emerald-200'
                       : gstinFeedback.type === 'error'
-                      ? 'bg-rose-100 text-rose-800 border border-rose-300'
-                      : 'bg-blue-100 text-blue-800 border border-blue-300'
+                      ? 'bg-rose-100 text-rose-800 border border-rose-300 dark:bg-rose-950/60 dark:text-rose-200'
+                      : 'bg-blue-100 text-blue-800 border border-blue-300 dark:bg-sky-950/60 dark:text-sky-200'
                   }`}
                 >
                   {gstinFeedback.type === 'success' ? (
-                    <CheckCircle2 className="w-4 h-4 text-emerald-600" />
+                    <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
                   ) : (
-                    <AlertCircle className="w-4 h-4" />
+                    <AlertCircle className="w-4 h-4 shrink-0" />
                   )}
                   <span>{gstinFeedback.message}</span>
                 </div>
@@ -300,12 +341,13 @@ export const PartyFormModal: React.FC<PartyFormModalProps> = ({
                 Trade Name / Medical Store / Doctor Name *
               </label>
               <input
+                ref={nameInputRef}
                 type="text"
                 required
                 value={name}
                 onChange={(e) => setName(e.target.value)}
                 placeholder="e.g. KHUSHI MEDICO or DR. R.K. SHARMA"
-                className="w-full px-3 py-1.5 font-bold uppercase border border-slate-300 dark:border-slate-600 dark:bg-slate-800"
+                className="w-full px-3 py-1.5 font-bold uppercase border border-slate-300 dark:border-slate-600 dark:bg-slate-800 focus:ring-2 focus:ring-sky-500"
               />
             </div>
             <div>
@@ -322,7 +364,7 @@ export const PartyFormModal: React.FC<PartyFormModalProps> = ({
             </div>
           </div>
 
-          {/* Licenses & Contact */}
+          {/* Licenses & Phone */}
           <div className="grid grid-cols-3 gap-3">
             <div>
               <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">
@@ -333,46 +375,46 @@ export const PartyFormModal: React.FC<PartyFormModalProps> = ({
                 value={dlNo}
                 onChange={(e) => setDlNo(e.target.value)}
                 placeholder="e.g. 142/142A"
-                className="w-full px-3 py-1.5 uppercase border border-slate-300 dark:border-slate-600 dark:bg-slate-800"
+                className="w-full px-3 py-1.5 uppercase font-mono border border-slate-300 dark:border-slate-600 dark:bg-slate-800"
               />
             </div>
             <div>
               <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">
-                Phone / WhatsApp Number
-              </label>
-              <input
-                type="text"
-                value={phone}
-                onChange={(e) => setPhone(e.target.value)}
-                placeholder="e.g. 9835466285"
-                className="w-full px-3 py-1.5 border border-slate-300 dark:border-slate-600 dark:bg-slate-800"
-              />
-            </div>
-            <div>
-              <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">
-                FSSAI License No. (Optional)
+                FSSAI License No.
               </label>
               <input
                 type="text"
                 value={fssaiNo}
                 onChange={(e) => setFssaiNo(e.target.value)}
-                placeholder="14-digit FSSAI"
-                className="w-full px-3 py-1.5 border border-slate-300 dark:border-slate-600 dark:bg-slate-800"
+                placeholder="Optional"
+                className="w-full px-3 py-1.5 font-mono border border-slate-300 dark:border-slate-600 dark:bg-slate-800"
+              />
+            </div>
+            <div>
+              <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">
+                WhatsApp / Phone *
+              </label>
+              <input
+                type="text"
+                value={phone}
+                onChange={(e) => setPhone(e.target.value)}
+                placeholder="10-digit mobile"
+                className="w-full px-3 py-1.5 font-mono border border-slate-300 dark:border-slate-600 dark:bg-slate-800"
               />
             </div>
           </div>
 
-          {/* Address & City */}
+          {/* Address, City, State */}
           <div className="grid grid-cols-3 gap-3">
-            <div className="col-span-2">
+            <div className="col-span-3">
               <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">
-                Address / Village / Mohalla
+                Address / Market Location
               </label>
               <input
                 type="text"
                 value={address}
                 onChange={(e) => setAddress(e.target.value)}
-                placeholder="e.g. MAIN ROAD, PIPRA DEWASH"
+                placeholder="e.g. MAIN ROAD, NEAR HOSPITAL CHOWK"
                 className="w-full px-3 py-1.5 uppercase border border-slate-300 dark:border-slate-600 dark:bg-slate-800"
               />
             </div>
@@ -384,85 +426,79 @@ export const PartyFormModal: React.FC<PartyFormModalProps> = ({
                 type="text"
                 value={city}
                 onChange={(e) => setCity(e.target.value)}
-                className="w-full px-3 py-1.5 uppercase border border-slate-300 dark:border-slate-600 dark:bg-slate-800"
+                className="w-full px-3 py-1.5 uppercase font-bold border border-slate-300 dark:border-slate-600 dark:bg-slate-800"
+              />
+            </div>
+            <div>
+              <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">
+                State Name
+              </label>
+              <input
+                type="text"
+                value={stateName}
+                onChange={(e) => setStateName(e.target.value)}
+                className="w-full px-3 py-1.5 uppercase font-bold border border-slate-300 dark:border-slate-600 dark:bg-slate-800"
+              />
+            </div>
+            <div>
+              <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">
+                State Code
+              </label>
+              <input
+                type="text"
+                value={stateCode}
+                onChange={(e) => setStateCode(e.target.value)}
+                className="w-full px-3 py-1.5 font-mono font-bold border border-slate-300 dark:border-slate-600 dark:bg-slate-800"
               />
             </div>
           </div>
 
-          {/* State Selection */}
-          <div className="grid grid-cols-2 gap-3">
+          {/* Financial Balances */}
+          <div className="grid grid-cols-2 gap-3 p-3 bg-slate-50 dark:bg-slate-800/60 border border-slate-300 dark:border-slate-700">
             <div>
               <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">
-                State &amp; State Code
+                Opening Balance (₹)
               </label>
-              <select
-                value={stateCode}
-                onChange={(e) => {
-                  const code = e.target.value;
-                  setStateCode(code);
-                  setStateName(GST_STATE_MAP[code] || 'OTHER');
-                }}
-                className="w-full px-3 py-1.5 border border-slate-300 dark:border-slate-600 dark:bg-slate-800 font-bold"
-              >
-                {Object.entries(GST_STATE_MAP).map(([code, sname]) => (
-                  <option key={code} value={code}>
-                    {code} - {sname} {code === '10' ? '(BIHAR - INTRA STATE)' : '(INTER STATE)'}
-                  </option>
-                ))}
-              </select>
+              <input
+                type="number"
+                step="0.01"
+                value={openingBalance}
+                onChange={(e) => setOpeningBalance(parseFloat(e.target.value) || 0)}
+                className="w-full px-3 py-1.5 font-mono font-bold border border-slate-300 dark:border-slate-600 dark:bg-slate-800"
+              />
+              <span className="text-[10px] text-slate-500">
+                {partyType === 'CUSTOMER' ? 'Amount Customer Owes to Radha Drugs' : 'Amount Radha Drugs Owes to Supplier'}
+              </span>
             </div>
-
             <div>
               <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">
                 Credit Limit (₹)
               </label>
               <input
                 type="number"
+                step="1000"
                 value={creditLimit}
-                onChange={(e) => setCreditLimit(Number(e.target.value))}
-                className="w-full px-3 py-1.5 border border-slate-300 dark:border-slate-600 dark:bg-slate-800 font-mono"
+                onChange={(e) => setCreditLimit(parseFloat(e.target.value) || 100000)}
+                className="w-full px-3 py-1.5 font-mono font-bold border border-slate-300 dark:border-slate-600 dark:bg-slate-800"
               />
+              <span className="text-[10px] text-slate-500">Maximum credit outstanding threshold</span>
             </div>
           </div>
 
-          {/* Opening Balance (Only shown for new parties) */}
-          {!initialParty && (
-            <div className="p-3 bg-amber-50 dark:bg-amber-950/20 border border-amber-300 dark:border-amber-800">
-              <label className="block font-bold text-amber-900 dark:text-amber-200 mb-1">
-                Opening Balance / Old Udhaar (₹)
-              </label>
-              <div className="flex items-center space-x-2">
-                <input
-                  type="number"
-                  step="0.01"
-                  value={openingBalance}
-                  onChange={(e) => setOpeningBalance(Number(e.target.value))}
-                  placeholder="0.00"
-                  className="w-48 px-3 py-1.5 font-mono font-bold text-sm border border-slate-300 dark:border-slate-600 dark:bg-slate-800"
-                />
-                <span className="text-[11px] text-amber-800 dark:text-amber-300">
-                  {partyType === 'CUSTOMER'
-                    ? '(Amount this customer owes Radha Drugs from past years)'
-                    : '(Amount Radha Drugs owes this vendor from past bills)'}
-                </span>
-              </div>
-            </div>
-          )}
-
-          {/* Modal Actions */}
-          <div className="pt-2 border-t border-slate-300 dark:border-slate-700 flex justify-end space-x-2">
+          {/* Form Actions */}
+          <div className="flex justify-end space-x-3 pt-3 border-t border-slate-200 dark:border-slate-700">
             <button
               type="button"
               onClick={onClose}
-              className="px-4 py-2 bg-slate-200 dark:bg-slate-700 text-slate-800 dark:text-slate-200 font-bold rounded-sm hover:bg-slate-300"
+              className="px-4 py-2 border border-slate-300 dark:border-slate-600 text-slate-700 dark:text-slate-300 font-bold rounded-sm hover:bg-slate-100 dark:hover:bg-slate-800"
             >
-              Cancel [Esc]
+              Cancel
             </button>
             <button
               type="submit"
-              className="px-5 py-2 bg-sky-600 hover:bg-sky-500 text-white font-extrabold rounded-sm shadow-md"
+              className="px-6 py-2 bg-sky-600 hover:bg-sky-500 text-white font-extrabold rounded-sm shadow-md"
             >
-              Save Party Profile [F10]
+              {initialParty ? 'Save Changes' : 'Register Party'}
             </button>
           </div>
         </form>

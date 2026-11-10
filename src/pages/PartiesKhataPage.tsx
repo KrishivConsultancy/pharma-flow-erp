@@ -18,6 +18,7 @@ import {
   AlertTriangle,
   ArrowRight,
   Eye,
+  Trash2,
 } from 'lucide-react';
 import { dbService } from '../db/databaseService';
 import {
@@ -146,6 +147,27 @@ export const PartiesKhataPage: React.FC<PartiesKhataPageProps> = ({ company }) =
       (p.phone || '').includes(searchQuery);
     return matchesSearch;
   });
+
+  // Delete Party with safety validation
+  const handleDeleteParty = async () => {
+    if (!selectedParty) return;
+    if (
+      !window.confirm(
+        `Are you sure you want to delete ${selectedParty.name}?\n\nNote: Parties with recorded invoices or ledger transactions cannot be deleted to maintain financial integrity.`
+      )
+    ) {
+      return;
+    }
+
+    try {
+      await dbService.deleteParty(selectedParty.id);
+      alert('✅ Party deleted successfully.');
+      setSelectedParty(null);
+      await loadParties();
+    } catch (err: any) {
+      alert(`Cannot delete party: ${err.message}`);
+    }
+  };
 
   // Export Ledger CSV
   const handleExportLedgerCsv = () => {
@@ -327,6 +349,14 @@ export const PartiesKhataPage: React.FC<PartiesKhataPageProps> = ({ company }) =
                   className="px-3 py-1.5 bg-slate-200 dark:bg-slate-700 hover:bg-slate-300 text-slate-800 dark:text-slate-200 font-bold rounded-sm"
                 >
                   Edit Profile
+                </button>
+
+                <button
+                  onClick={handleDeleteParty}
+                  className="px-2.5 py-1.5 bg-rose-50 dark:bg-rose-950/40 hover:bg-rose-100 text-rose-700 dark:text-rose-300 border border-rose-300 dark:border-rose-800 font-bold rounded-sm"
+                  title="Delete Party"
+                >
+                  <Trash2 className="w-3.5 h-3.5" />
                 </button>
               </div>
             </div>

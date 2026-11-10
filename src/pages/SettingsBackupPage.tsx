@@ -35,12 +35,24 @@ export const SettingsBackupPage: React.FC<SettingsBackupPageProps> = ({
   const [profile, setProfile] = useState<CompanyProfile>(company);
 
   // Cloud API Credentials State
-  const [supabaseUrl, setSupabaseUrl] = useState<string>(localStorage.getItem('radha_supabase_url') || '');
-  const [supabaseAnonKey, setSupabaseAnonKey] = useState<string>(localStorage.getItem('radha_supabase_anon_key') || '');
-  const [cashfreeId, setCashfreeId] = useState<string>(localStorage.getItem('cashfree_client_id') || '');
-  const [cashfreeSecret, setCashfreeSecret] = useState<string>(localStorage.getItem('cashfree_client_secret') || '');
-  const [cashfreeSandbox, setCashfreeSandbox] = useState<boolean>(localStorage.getItem('cashfree_sandbox') === 'true');
-  const [geminiKey, setGeminiKey] = useState<string>(geminiOcrService.getApiKey());
+  const [supabaseUrl, setSupabaseUrl] = useState<string>(
+    localStorage.getItem('radha_supabase_url') || (import.meta as any).env.VITE_SUPABASE_URL || ''
+  );
+  const [supabaseAnonKey, setSupabaseAnonKey] = useState<string>(
+    localStorage.getItem('radha_supabase_anon_key') || (import.meta as any).env.VITE_SUPABASE_ANON_KEY || ''
+  );
+  const [cashfreeId, setCashfreeId] = useState<string>(
+    localStorage.getItem('cashfree_client_id') || (import.meta as any).env.VITE_CASHFREE_CLIENT_ID || 'CF1181570DBDGAKS3N65S73BH449G'
+  );
+  const [cashfreeSecret, setCashfreeSecret] = useState<string>(
+    localStorage.getItem('cashfree_client_secret') || (import.meta as any).env.VITE_CASHFREE_CLIENT_SECRET || 'cfsk_ma_prod_c321adcc81d634dbc34a7c7465b03e00_d478ef0e'
+  );
+  const [cashfreeSandbox, setCashfreeSandbox] = useState<boolean>(
+    localStorage.getItem('cashfree_sandbox') === 'true'
+  );
+  const [geminiKey, setGeminiKey] = useState<string>(
+    geminiOcrService.getApiKey() || (import.meta as any).env.VITE_GEMINI_API_KEY || ''
+  );
 
   const [syncStatus, setSyncStatus] = useState<SyncStatus>({
     state: 'IDLE',
@@ -166,16 +178,20 @@ export const SettingsBackupPage: React.FC<SettingsBackupPageProps> = ({
     reader.readAsText(file);
   };
 
-  // Reset to Factory Seed Data
-  const handleResetToSeed = async () => {
-    const confirmReset = confirm(
-      '⚠️ CAUTION: This will reset all tables to Radha Drugs production seed data. All new bills will be erased. Proceed?'
+  // Wipe & Factory Reset Database
+  const handleWipeAndReset = async () => {
+    const confirmWipe = window.confirm(
+      '⚠️ CRITICAL WARNING: WIPE & FACTORY RESET DATABASE\n\nThis will permanently delete:\n- ALL Sales & Purchase Invoices\n- ALL Inventory Batches (Stock valuation to ₹0)\n- ALL Customers & Vendors\n- ALL Ledger Transactions\n\nThe official Radha Drugs company profile will be preserved.\n\nAre you sure you want to completely wipe the database?'
     );
-    if (!confirmReset) return;
+    if (!confirmWipe) return;
 
-    await dbService.resetToSeedData();
-    alert('Database successfully reset to original seed data!');
-    window.location.reload();
+    try {
+      await dbService.wipeAndResetDatabase();
+      alert('✅ Database completely wiped to 0. Clean production state ready.');
+      window.location.reload();
+    } catch (err: any) {
+      alert('Failed to reset database: ' + err.message);
+    }
   };
 
   return (
@@ -543,19 +559,20 @@ export const SettingsBackupPage: React.FC<SettingsBackupPageProps> = ({
               />
             </div>
 
-            {/* Factory Seed Reset */}
-            <div className="pt-3 border-t border-slate-200 dark:border-slate-800 flex items-center justify-between">
+            {/* Wipe & Factory Reset Database */}
+            <div className="pt-3 border-t border-slate-200 dark:border-slate-800 flex items-center justify-between bg-rose-50 dark:bg-rose-950/30 p-2.5 rounded-sm border border-rose-200 dark:border-rose-900">
               <div>
-                <div className="font-bold text-slate-800 dark:text-slate-200">Reset to Production Seed Data</div>
-                <div className="text-[10px] text-slate-500">Reloads Radha Drugs initial state (Khushi Medico, Indizen bill)</div>
+                <div className="font-bold text-rose-800 dark:text-rose-200">Wipe &amp; Factory Reset Database (0 Bills, 0 Stock)</div>
+                <div className="text-[10px] text-rose-600 dark:text-rose-400">Completely clears all bills, inventory batches, and parties to 0 while keeping Radha Drugs profile intact.</div>
               </div>
 
               <button
                 type="button"
-                onClick={handleResetToSeed}
-                className="px-3 py-1.5 bg-rose-700 hover:bg-rose-600 text-white font-bold rounded-sm text-[11px]"
+                onClick={handleWipeAndReset}
+                className="px-3.5 py-1.5 bg-rose-700 hover:bg-rose-600 text-white font-black rounded-sm text-xs shadow-sm flex items-center space-x-1"
               >
-                Reset to Seed
+                <RotateCcw className="w-3.5 h-3.5" />
+                <span>Wipe Database to 0</span>
               </button>
             </div>
           </div>

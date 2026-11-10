@@ -18,23 +18,23 @@ import {
 } from './schema';
 import {
   SEED_COMPANY_PROFILE,
-  SEED_PARTIES,
   SEED_MEDICINES,
-  SEED_BATCHES,
-  SEED_PURCHASE,
-  SEED_PURCHASE_ITEMS,
-  SEED_SALE_1,
-  SEED_SALE_1_ITEMS,
-  SEED_SALE_2,
-  SEED_SALE_2_ITEMS,
-  SEED_LEDGER_TRANSACTIONS,
-  SEED_CUSTOMER_RATES,
 } from './seedData';
 
-const DB_STORAGE_KEY = 'radha_drugs_sqlite_db';
-const DB_VERSION = 1;
-const IDB_NAME = 'RadhaDrugsIDB';
-const IDB_STORE = 'sqlite_store';
+// Storage key bumped to V2 to ensure any old corrupted/polluted dummy state is purged
+const DB_STORAGE_KEY = 'RADHA_DRUGS_PRODUCTION_DB_V2';
+const DB_VERSION = 2;
+const IDB_NAME = 'RadhaDrugsIDB_V2';
+const IDB_STORE = 'sqlite_store_v2';
+
+// Parameter sanitizer for sql.js (sql.js throws if any bound parameter is undefined or NaN)
+export function sanitizeParams(params: any[] = []): any[] {
+  return params.map(p => {
+    if (p === undefined || p === null) return null;
+    if (typeof p === 'number' && (isNaN(p) || !isFinite(p))) return 0;
+    return p;
+  });
+}
 
 // Helper for IndexedDB persistence of SQLite Uint8Array binary
 class IndexedDBStore {
@@ -42,6 +42,10 @@ class IndexedDBStore {
 
   constructor() {
     this.dbPromise = new Promise((resolve, reject) => {
+      if (typeof indexedDB === 'undefined') {
+        resolve(null as any);
+        return;
+      }
       const request = indexedDB.open(IDB_NAME, DB_VERSION);
       request.onupgradeneeded = () => {
         const db = request.result;
@@ -57,6 +61,7 @@ class IndexedDBStore {
   async get(): Promise<Uint8Array | null> {
     try {
       const db = await this.dbPromise;
+      if (!db) return null;
       return new Promise((resolve) => {
         const tx = db.transaction(IDB_STORE, 'readonly');
         const store = tx.objectStore(IDB_STORE);
@@ -73,6 +78,7 @@ class IndexedDBStore {
   async set(data: Uint8Array): Promise<void> {
     try {
       const db = await this.dbPromise;
+      if (!db) return;
       return new Promise((resolve, reject) => {
         const tx = db.transaction(IDB_STORE, 'readwrite');
         const store = tx.objectStore(IDB_STORE);
@@ -86,18 +92,23 @@ class IndexedDBStore {
   }
 
   async clear(): Promise<void> {
-    const db = await this.dbPromise;
-    return new Promise((resolve, reject) => {
-      const tx = db.transaction(IDB_STORE, 'readwrite');
-      const store = tx.objectStore(IDB_STORE);
-      const req = store.delete(DB_STORAGE_KEY);
-      req.onsuccess = () => resolve();
-      req.onerror = () => reject(req.error);
-    });
+    try {
+      const db = await this.dbPromise;
+      if (!db) return;
+      return new Promise((resolve, reject) => {
+        const tx = db.transaction(IDB_STORE, 'readwrite');
+        const store = tx.objectStore(IDB_STORE);
+        const req = store.delete(DB_STORAGE_KEY);
+        req.onsuccess = () => resolve();
+        req.onerror = () => reject(req.error);
+      });
+    } catch (e) {
+      console.warn('IDB clear failed', e);
+    }
   }
 }
 
-class DatabaseService {
+export class DatabaseService {
   private db: Database | null = null;
   private idb = new IndexedDBStore();
   private isInitializing = false;
@@ -112,8 +123,11 @@ class DatabaseService {
     };
   }
 
-  private notifyChange() {
+  notifyChange() {
     this.saveToStorage();
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new CustomEvent('radha-db-changed'));
+    }
     for (const listener of this.changeListeners) {
       try {
         listener();
@@ -121,6 +135,12 @@ class DatabaseService {
         console.error('Error in db change listener:', err);
       }
     }
+  }
+
+  // Safe wrapper for executing SQL with sanitized parameters
+  safeRun(sql: string, params: any[] = []): void {
+    if (!this.db) throw new Error('Database not initialized');
+    this.db.run(sql, sanitizeParams(params));
   }
 
   async getDb(): Promise<Database> {
@@ -138,19 +158,19 @@ class DatabaseService {
         locateFile: () => (typeof window !== 'undefined' && window.location.protocol === 'file:' ? './sql-wasm.wasm' : '/sql-wasm.wasm'),
       });
 
-      // Try loading existing binary from IndexedDB
+      // Try loading existing binary from IndexedDB V2
       const savedBinary = await this.idb.get();
       if (savedBinary && savedBinary.length > 0) {
         try {
           this.db = new SQL.Database(savedBinary);
-          console.log('✅ SQLite loaded from persistent IndexedDB');
+          console.log('✅ SQLite loaded from persistent IndexedDB (V2)');
         } catch (e) {
           console.error('Failed to parse saved DB binary, creating fresh', e);
           this.db = new SQL.Database();
           this.runSchemaAndSeed();
         }
       } else {
-        console.log('⚡ Initializing new SQLite database with schema & Radha Drugs seed data...');
+        console.log('⚡ Initializing new clean production SQLite database (V2)...');
         this.db = new SQL.Database();
         this.runSchemaAndSeed();
         await this.saveToStorage();
@@ -179,14 +199,14 @@ class DatabaseService {
     this.seedDatabase();
   }
 
-  // Seed with realistic Radha Drugs production data
+  // Seed with official Radha Drugs company profile and standard generic medicine dictionary (0 stock)
   seedDatabase() {
     if (!this.db) return;
 
     this.db.exec('BEGIN TRANSACTION;');
     try {
       // 1. Company Profile
-      this.db.run(
+      this.safeRun(
         `INSERT OR REPLACE INTO company_profile (
           id, company_name, tagline, address_line1, city_district, state_name, state_code,
           pincode, phone, gstin, dl_no, dl_valid_upto, fssai_no, bank_name, bank_account_no,
@@ -220,185 +240,112 @@ class DatabaseService {
         ]
       );
 
-      // 2. Parties
-      for (const p of SEED_PARTIES) {
-        this.db.run(
-          `INSERT OR REPLACE INTO parties (
-            id, party_type, is_gst_registered, gstin, name, legal_name, dl_no, fssai_no,
-            phone, address, city, state_name, state_code, opening_balance, current_balance,
-            credit_limit, gst_status, created_at, updated_at, sync_status
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-          [
-            p.id, p.party_type, p.is_gst_registered, p.gstin, p.name, p.legal_name, p.dl_no,
-            p.fssai_no, p.phone, p.address, p.city, p.state_name, p.state_code, p.opening_balance,
-            p.current_balance, p.credit_limit, p.gst_status, p.created_at, p.updated_at, p.sync_status
-          ]
-        );
-      }
-
-      // 3. Medicines
+      // 2. Standard Generics Medicine Dictionary (Zero batches, zero stock)
       for (const m of SEED_MEDICINES) {
-        this.db.run(
-          `INSERT OR REPLACE INTO medicines_master (
+        this.safeRun(
+          `INSERT OR IGNORE INTO medicines_master (
             id, name, hsn_code, pack_size, mfg_by, salt_composition, gst_percent,
             barcode_gtin, min_stock_alert, default_discount_percent, updated_at, sync_status
           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
           [
-            m.id, m.name, m.hsn_code, m.pack_size, mfg_by(m.mfg_by), m.salt_composition, m.gst_percent,
+            m.id, m.name, m.hsn_code, m.pack_size, m.mfg_by, m.salt_composition, m.gst_percent,
             m.barcode_gtin, m.min_stock_alert, m.default_discount_percent, m.updated_at, m.sync_status
           ]
         );
       }
 
-      // 4. Batches
-      for (const b of SEED_BATCHES) {
-        this.db.run(
-          `INSERT OR REPLACE INTO inventory_batches (
-            id, medicine_id, batch_no, exp_date_mm_yy, exp_date_iso, mrp, old_mrp,
-            purchase_rate, purchase_discount_percent, gst_percent, scheme_billed_qty,
-            scheme_free_qty, net_landing_cost, default_sale_rate, available_qty,
-            last_vendor_id, rack_location, updated_at, sync_status
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-          [
-            b.id, b.medicine_id, b.batch_no, b.exp_date_mm_yy, b.exp_date_iso, b.mrp, b.old_mrp,
-            b.purchase_rate, b.purchase_discount_percent, b.gst_percent, b.scheme_billed_qty,
-            b.scheme_free_qty, b.net_landing_cost, b.default_sale_rate, b.available_qty,
-            b.last_vendor_id, b.rack_location, b.updated_at, b.sync_status
-          ]
-        );
-      }
-
-      // 5. Seed Purchase
-      this.db.run(
-        `INSERT OR REPLACE INTO purchases (
-          id, supplier_invoice_no, invoice_date, vendor_id, tax_type, sub_total,
-          discount_amount, total_cgst, total_sgst, total_igst, round_off, grand_total,
-          amount_paid, payment_mode, entry_source, notes, created_at, sync_status
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        [
-          SEED_PURCHASE.id, SEED_PURCHASE.supplier_invoice_no, SEED_PURCHASE.invoice_date,
-          SEED_PURCHASE.vendor_id, SEED_PURCHASE.tax_type, SEED_PURCHASE.sub_total,
-          SEED_PURCHASE.discount_amount, SEED_PURCHASE.total_cgst, SEED_PURCHASE.total_sgst,
-          SEED_PURCHASE.total_igst, SEED_PURCHASE.round_off, SEED_PURCHASE.grand_total,
-          SEED_PURCHASE.amount_paid, SEED_PURCHASE.payment_mode, SEED_PURCHASE.entry_source,
-          SEED_PURCHASE.notes, SEED_PURCHASE.created_at, SEED_PURCHASE.sync_status
-        ]
-      );
-
-      for (const pi of SEED_PURCHASE_ITEMS) {
-        this.db.run(
-          `INSERT OR REPLACE INTO purchase_items (
-            id, purchase_id, medicine_id, batch_id, product_name, hsn_code, pack_size,
-            mfg_by, batch_no, exp_date_mm_yy, billed_qty, free_qty, mrp, old_mrp,
-            purchase_rate, discount_percent, taxable_amount, gst_percent, cgst_amount,
-            sgst_amount, igst_amount, line_total, net_landing_cost
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-          [
-            pi.id, pi.purchase_id, pi.medicine_id, pi.batch_id, pi.product_name, pi.hsn_code,
-            pi.pack_size, pi.mfg_by, pi.batch_no, pi.exp_date_mm_yy, pi.billed_qty, pi.free_qty,
-            pi.mrp, pi.old_mrp, pi.purchase_rate, pi.discount_percent, pi.taxable_amount,
-            pi.gst_percent, pi.cgst_amount, pi.sgst_amount, pi.igst_amount, pi.line_total, pi.net_landing_cost
-          ]
-        );
-      }
-
-      // 6. Seed Sales
-      for (const s of [SEED_SALE_1, SEED_SALE_2]) {
-        this.db.run(
-          `INSERT OR REPLACE INTO sales (
-            id, invoice_no, bill_type, sale_date, customer_id, tax_type,
-            customer_previous_balance, sub_total, bill_discount_amount, other_adjustment,
-            total_cgst, total_sgst, total_igst, total_gst, round_off, net_amount,
-            amount_received, payment_mode, total_cost_of_goods, net_profit, is_cancelled,
-            created_at, sync_status
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-          [
-            s.id, s.invoice_no, s.bill_type, s.sale_date, s.customer_id, s.tax_type,
-            s.customer_previous_balance, s.sub_total, s.bill_discount_amount, s.other_adjustment,
-            s.total_cgst, s.total_sgst, s.total_igst, s.total_gst, s.round_off, s.net_amount,
-            s.amount_received, s.payment_mode, s.total_cost_of_goods, s.net_profit, s.is_cancelled,
-            s.created_at, s.sync_status
-          ]
-        );
-      }
-
-      for (const si of [...SEED_SALE_1_ITEMS, ...SEED_SALE_2_ITEMS]) {
-        this.db.run(
-          `INSERT OR REPLACE INTO sale_items (
-            id, sale_id, medicine_id, batch_id, product_name, hsn_code, pack_size,
-            mfg_by, batch_no, exp_date_mm_yy, qty, free_qty, mrp, sale_rate,
-            discount_percent, taxable_amount, gst_percent, cgst_percent, cgst_amount,
-            sgst_percent, sgst_amount, igst_percent, igst_amount, line_total,
-            net_landing_cost_snapshot, line_profit
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-          [
-            si.id, si.sale_id, si.medicine_id, si.batch_id, si.product_name, si.hsn_code,
-            si.pack_size, si.mfg_by, si.batch_no, si.exp_date_mm_yy, si.qty, si.free_qty,
-            si.mrp, si.sale_rate, si.discount_percent, si.taxable_amount, si.gst_percent,
-            si.cgst_percent, si.cgst_amount, si.sgst_percent, si.sgst_amount, si.igst_percent,
-            si.igst_amount, si.line_total, si.net_landing_cost_snapshot, si.line_profit
-          ]
-        );
-      }
-
-      // 7. Ledger Transactions
-      for (const lt of SEED_LEDGER_TRANSACTIONS) {
-        this.db.run(
-          `INSERT OR REPLACE INTO party_ledger_transactions (
-            id, party_id, transaction_date, voucher_type, voucher_no, reference_id,
-            debit_amount, credit_amount, running_balance, payment_method, narration, created_at
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-          [
-            lt.id, lt.party_id, lt.transaction_date, lt.voucher_type, lt.voucher_no,
-            lt.reference_id, lt.debit_amount, lt.credit_amount, lt.running_balance,
-            lt.payment_method, lt.narration, lt.created_at
-          ]
-        );
-      }
-
-      // 8. Customer Rate Memory
-      for (const cr of SEED_CUSTOMER_RATES) {
-        this.db.run(
-          `INSERT OR REPLACE INTO customer_rate_memory (
-            id, customer_id, medicine_id, last_sale_rate, last_discount_percent, updated_at
-          ) VALUES (?, ?, ?, ?, ?, ?)`,
-          [cr.id, cr.customer_id, cr.medicine_id, cr.last_sale_rate, cr.last_discount_percent, cr.updated_at]
-        );
-      }
-
       this.db.exec('COMMIT;');
-      console.log('✅ Radha Drugs Database Seeded Successfully!');
+      console.log('✅ Clean production database initialized with Radha Drugs profile and generic dictionary.');
     } catch (err) {
       this.db.exec('ROLLBACK;');
-      console.error('Error during database seeding:', err);
+      console.error('Fatal database initialization error:', err);
     }
   }
 
-  // Generic query runner returning structured objects
+  // Wipe all transactional and party data to 0
+  async wipeAndResetDatabase(): Promise<void> {
+    const db = await this.getDb();
+    db.exec('BEGIN TRANSACTION;');
+    try {
+      db.exec(`
+        DELETE FROM sale_items;
+        DELETE FROM sales;
+        DELETE FROM purchase_items;
+        DELETE FROM purchases;
+        DELETE FROM returns_adjustments;
+        DELETE FROM party_ledger_transactions;
+        DELETE FROM customer_rate_memory;
+        DELETE FROM inventory_batches;
+        DELETE FROM parties;
+        DELETE FROM sync_queue;
+      `);
+
+      // Ensure company profile has clean start counters
+      this.safeRun(
+        `UPDATE company_profile SET
+          gst_invoice_next_no = 1157,
+          simple_bill_next_no = 101
+        WHERE id = 'RADHA_DRUGS_MAIN'`
+      );
+
+      db.exec('COMMIT;');
+      await this.saveToStorage();
+      this.notifyChange();
+      console.log('✅ Factory reset complete: All transactions, stock batches, and parties wiped to 0.');
+    } catch (err) {
+      db.exec('ROLLBACK;');
+      throw err;
+    }
+  }
+
+  // Reset to initial seed state
+  async resetToSeedData(): Promise<void> {
+    await this.wipeAndResetDatabase();
+  }
+
+  // Generic Query Executor returning typed object array
   async query<T = any>(sql: string, params: any[] = []): Promise<T[]> {
     const db = await this.getDb();
-    const stmt = db.prepare(sql);
-    if (params && params.length > 0) {
-      stmt.bind(params);
+    const cleanParams = sanitizeParams(params);
+    let stmt;
+    try {
+      stmt = db.prepare(sql);
+      stmt.bind(cleanParams);
+      const results: T[] = [];
+      while (stmt.step()) {
+        results.push(stmt.getAsObject() as unknown as T);
+      }
+      return results;
+    } catch (err) {
+      console.error('SQL Query Error:', err, sql, cleanParams);
+      throw err;
+    } finally {
+      if (stmt) {
+        try {
+          stmt.free();
+        } catch {
+          // ignore
+        }
+      }
     }
-    const results: T[] = [];
-    while (stmt.step()) {
-      results.push(stmt.getAsObject() as unknown as T);
-    }
-    stmt.free();
-    return results;
   }
 
-  // Execute a query without returning rows
+  // Generic Statement Executor
   async exec(sql: string, params: any[] = []): Promise<void> {
     const db = await this.getDb();
-    db.run(sql, params);
-    this.notifyChange();
+    const cleanParams = sanitizeParams(params);
+    try {
+      if (cleanParams.length === 0) {
+        db.exec(sql);
+      } else {
+        db.run(sql, cleanParams);
+      }
+      this.notifyChange();
+    } catch (err) {
+      console.error('SQL Exec Error:', err, sql, cleanParams);
+      throw err;
+    }
   }
-
-  // ==========================================
-  // ATOMIC BUSINESS TRANSACTIONS
-  // ==========================================
 
   // 1. ATOMIC SALE TRANSACTION
   async saveSaleTransaction(sale: Sale, items: SaleItem[]): Promise<void> {
@@ -406,7 +353,7 @@ class DatabaseService {
     db.exec('BEGIN TRANSACTION;');
     try {
       // 1.1 Insert Sale Header
-      db.run(
+      this.safeRun(
         `INSERT INTO sales (
           id, invoice_no, bill_type, sale_date, customer_id, tax_type,
           customer_previous_balance, sub_total, bill_discount_amount, other_adjustment,
@@ -415,18 +362,17 @@ class DatabaseService {
           created_at, sync_status
         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [
-          sale.id, sale.invoice_no, sale.bill_type, sale.sale_date, sale.customer_id,
-          sale.tax_type, sale.customer_previous_balance, sale.sub_total,
-          sale.bill_discount_amount, sale.other_adjustment, sale.total_cgst,
-          sale.total_sgst, sale.total_igst, sale.total_gst, sale.round_off,
-          sale.net_amount, sale.amount_received, sale.payment_mode,
-          sale.total_cost_of_goods, sale.net_profit, 0, sale.created_at, 'PENDING'
+          sale.id, sale.invoice_no, sale.bill_type, sale.sale_date, sale.customer_id, sale.tax_type,
+          sale.customer_previous_balance, sale.sub_total, sale.bill_discount_amount, sale.other_adjustment,
+          sale.total_cgst, sale.total_sgst, sale.total_igst, sale.total_gst, sale.round_off, sale.net_amount,
+          sale.amount_received, sale.payment_mode, sale.total_cost_of_goods, sale.net_profit, sale.is_cancelled ? 1 : 0,
+          sale.created_at, 'PENDING'
         ]
       );
 
-      // 1.2 Insert Line Items & Decrement Batch Inventory
+      // 1.2 Insert Line Items & Deduct Batch Stock
       for (const item of items) {
-        db.run(
+        this.safeRun(
           `INSERT INTO sale_items (
             id, sale_id, medicine_id, batch_id, product_name, hsn_code, pack_size,
             mfg_by, batch_no, exp_date_mm_yy, qty, free_qty, mrp, sale_rate,
@@ -435,26 +381,26 @@ class DatabaseService {
             net_landing_cost_snapshot, line_profit
           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
           [
-            item.id, item.sale_id, item.medicine_id, item.batch_id, item.product_name,
-            item.hsn_code, item.pack_size, item.mfg_by, item.batch_no, item.exp_date_mm_yy,
-            item.qty, item.free_qty, item.mrp, item.sale_rate, item.discount_percent,
-            item.taxable_amount, item.gst_percent, item.cgst_percent, item.cgst_amount,
-            item.sgst_percent, item.sgst_amount, item.igst_percent, item.igst_amount,
-            item.line_total, item.net_landing_cost_snapshot, item.line_profit
+            item.id, item.sale_id, item.medicine_id, item.batch_id, item.product_name, item.hsn_code,
+            item.pack_size, item.mfg_by, item.batch_no, item.exp_date_mm_yy, item.qty, item.free_qty || 0,
+            item.mrp, item.sale_rate, item.discount_percent, item.taxable_amount, item.gst_percent,
+            item.cgst_percent, item.cgst_amount, item.sgst_percent, item.sgst_amount, item.igst_percent,
+            item.igst_amount, item.line_total, item.net_landing_cost_snapshot, item.line_profit
           ]
         );
 
-        // Deduct inventory batch stock: (qty + free_qty)
-        const totalDeduction = (item.qty || 0) + (item.free_qty || 0);
-        db.run(
+        // Deduct physical stock: qty + free_qty
+        const totalUnitsDeducted = (item.qty || 0) + (item.free_qty || 0);
+        this.safeRun(
           `UPDATE inventory_batches
-           SET available_qty = MAX(0, available_qty - ?), updated_at = ?
+           SET available_qty = MAX(0, available_qty - ?),
+               updated_at = ?
            WHERE id = ?`,
-          [totalDeduction, sale.created_at, item.batch_id]
+          [totalUnitsDeducted, sale.created_at, item.batch_id]
         );
 
-        // Update customer_rate_memory for this (customer, medicine) pair
-        db.run(
+        // Update customer rate memory
+        this.safeRun(
           `INSERT INTO customer_rate_memory (id, customer_id, medicine_id, last_sale_rate, last_discount_percent, updated_at)
            VALUES (?, ?, ?, ?, ?, ?)
            ON CONFLICT(customer_id, medicine_id) DO UPDATE SET
@@ -467,35 +413,34 @@ class DatabaseService {
             item.medicine_id,
             item.sale_rate,
             item.discount_percent,
-            sale.created_at,
+            sale.created_at
           ]
         );
       }
 
-      // 1.3 Update Customer Balance & Add Ledger Transaction
-      // Fetch latest customer balance
+      // 1.3 Update Customer Ledger and Current Balance
       const custRows = await this.query<Party>(`SELECT current_balance FROM parties WHERE id = ?`, [sale.customer_id]);
       const prevBal = custRows.length > 0 ? custRows[0].current_balance : 0;
-      
-      // Debit for the Sale Invoice
       const newBalAfterBill = prevBal + sale.net_amount;
-      db.run(
+
+      // Ledger row for bill debit
+      this.safeRun(
         `INSERT INTO party_ledger_transactions (
           id, party_id, transaction_date, voucher_type, voucher_no, reference_id,
           debit_amount, credit_amount, running_balance, payment_method, narration, created_at
         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [
-          `LEDGER_SALE_${sale.id}`,
+          `LEDGER_BILL_${sale.id}`,
           sale.customer_id,
           sale.sale_date,
-          'SALE_INVOICE',
+          sale.bill_type === 'GST_INVOICE' ? 'GST_TAX_INVOICE' : 'SIMPLE_BILL',
           sale.invoice_no,
           sale.id,
           sale.net_amount,
           0,
           newBalAfterBill,
           sale.payment_mode,
-          `Sale Bill ${sale.invoice_no} (${sale.bill_type === 'GST_INVOICE' ? 'GST' : 'Simple'})`,
+          `Sale Bill ${sale.invoice_no} (${sale.bill_type === 'GST_INVOICE' ? 'GST Invoice' : 'Estimate Memo'})`,
           sale.created_at
         ]
       );
@@ -505,7 +450,7 @@ class DatabaseService {
       // If customer made immediate payment (Cash/UPI/Partial)
       if (sale.amount_received > 0) {
         finalCustomerBalance = newBalAfterBill - sale.amount_received;
-        db.run(
+        this.safeRun(
           `INSERT INTO party_ledger_transactions (
             id, party_id, transaction_date, voucher_type, voucher_no, reference_id,
             debit_amount, credit_amount, running_balance, payment_method, narration, created_at
@@ -528,24 +473,24 @@ class DatabaseService {
       }
 
       // Update party current_balance
-      db.run(
+      this.safeRun(
         `UPDATE parties SET current_balance = ?, updated_at = ? WHERE id = ?`,
         [finalCustomerBalance, sale.created_at, sale.customer_id]
       );
 
       // Increment Company Invoice Sequence
       if (sale.bill_type === 'GST_INVOICE') {
-        db.run(
+        this.safeRun(
           `UPDATE company_profile SET gst_invoice_next_no = gst_invoice_next_no + 1 WHERE id = 'RADHA_DRUGS_MAIN'`
         );
       } else {
-        db.run(
+        this.safeRun(
           `UPDATE company_profile SET simple_bill_next_no = simple_bill_next_no + 1 WHERE id = 'RADHA_DRUGS_MAIN'`
         );
       }
 
       // Queue in sync_queue for Supabase
-      db.run(
+      this.safeRun(
         `INSERT INTO sync_queue (id, table_name, record_id, action, payload, status, created_at)
          VALUES (?, ?, ?, ?, ?, ?, ?)`,
         [
@@ -568,39 +513,74 @@ class DatabaseService {
     }
   }
 
-  // 2. ATOMIC PURCHASE TRANSACTION (3-Way smart entry)
+  // Cancel/Delete Sale Bill (Restores deducted batch stock & reverses customer ledger)
+  async deleteSaleTransaction(saleId: string): Promise<void> {
+    const db = await this.getDb();
+    db.exec('BEGIN TRANSACTION;');
+    try {
+      const sales = await this.query<Sale>(`SELECT * FROM sales WHERE id = ?`, [saleId]);
+      if (sales.length === 0) throw new Error('Sale bill not found');
+      const sale = sales[0];
+
+      const items = await this.query<SaleItem>(`SELECT * FROM sale_items WHERE sale_id = ?`, [saleId]);
+
+      // 1. Restore batch stock
+      for (const it of items) {
+        const unitsToRestore = (it.qty || 0) + (it.free_qty || 0);
+        this.safeRun(
+          `UPDATE inventory_batches
+           SET available_qty = available_qty + ?,
+               updated_at = ?
+           WHERE id = ?`,
+          [unitsToRestore, new Date().toISOString(), it.batch_id]
+        );
+      }
+
+      // 2. Reverse customer balance
+      const custRows = await this.query<Party>(`SELECT current_balance FROM parties WHERE id = ?`, [sale.customer_id]);
+      if (custRows.length > 0) {
+        const netReversal = sale.net_amount - (sale.amount_received || 0);
+        const newBal = custRows[0].current_balance - netReversal;
+        this.safeRun(
+          `UPDATE parties SET current_balance = ?, updated_at = ? WHERE id = ?`,
+          [newBal, new Date().toISOString(), sale.customer_id]
+        );
+      }
+
+      // 3. Delete records
+      this.safeRun(`DELETE FROM party_ledger_transactions WHERE reference_id = ?`, [saleId]);
+      this.safeRun(`DELETE FROM sale_items WHERE sale_id = ?`, [saleId]);
+      this.safeRun(`DELETE FROM sales WHERE id = ?`, [saleId]);
+
+      db.exec('COMMIT;');
+      this.notifyChange();
+    } catch (err) {
+      db.exec('ROLLBACK;');
+      throw err;
+    }
+  }
+
+  // 2. ATOMIC PURCHASE TRANSACTION (3-Way smart entry with exact stock increment)
   async savePurchaseTransaction(
     purchase: Purchase,
     items: PurchaseItem[],
     newMedicines: Partial<MedicineMaster>[] = []
   ): Promise<void> {
     const db = await this.getDb();
+
+    // Check duplicate bill guard: (vendor_id, supplier_invoice_no)
+    const existingBills = await this.query<{ id: string }>(
+      `SELECT id FROM purchases WHERE vendor_id = ? AND UPPER(TRIM(supplier_invoice_no)) = ?`,
+      [purchase.vendor_id, purchase.supplier_invoice_no.trim().toUpperCase()]
+    );
+    if (existingBills.length > 0) {
+      throw new Error(`Invoice #${purchase.supplier_invoice_no} from this vendor has already been entered into the system.`);
+    }
+
     db.exec('BEGIN TRANSACTION;');
     try {
-      // 2.1 Auto-learn / upsert new medicines into medicines_master
-      for (const med of newMedicines) {
-        if (!med.id || !med.name) continue;
-        db.run(
-          `INSERT INTO medicines_master (
-            id, name, hsn_code, pack_size, mfg_by, salt_composition, gst_percent,
-            barcode_gtin, min_stock_alert, default_discount_percent, updated_at, sync_status
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-          ON CONFLICT(name) DO UPDATE SET
-            hsn_code = COALESCE(excluded.hsn_code, medicines_master.hsn_code),
-            pack_size = COALESCE(excluded.pack_size, medicines_master.pack_size),
-            mfg_by = COALESCE(excluded.mfg_by, medicines_master.mfg_by),
-            gst_percent = COALESCE(excluded.gst_percent, medicines_master.gst_percent),
-            updated_at = excluded.updated_at`,
-          [
-            med.id, med.name.toUpperCase().trim(), med.hsn_code || '3004', med.pack_size || '',
-            med.mfg_by || '', med.salt_composition || '', med.gst_percent ?? 5,
-            med.barcode_gtin || '', med.min_stock_alert ?? 20, 0, purchase.created_at, 'PENDING'
-          ]
-        );
-      }
-
-      // 2.2 Insert Purchase Header
-      db.run(
+      // 2.1 Insert Purchase Header
+      this.safeRun(
         `INSERT INTO purchases (
           id, supplier_invoice_no, invoice_date, vendor_id, tax_type, sub_total,
           discount_amount, total_cgst, total_sgst, total_igst, round_off, grand_total,
@@ -616,9 +596,121 @@ class DatabaseService {
         ]
       );
 
-      // 2.3 Insert Items & Upsert Batches
-      for (const item of items) {
-        db.run(
+      // 2.2 Process Each Item with Exact Medicine & Batch Upsert
+      for (let idx = 0; idx < items.length; idx++) {
+        const item = items[idx];
+        const rawName = (item.product_name || '').trim().toUpperCase();
+        if (!rawName) continue;
+
+        // Auto-Create or Update Medicine in medicines_master
+        let resolvedMedId = item.medicine_id;
+        const existingMeds = await this.query<{ id: string }>(
+          `SELECT id FROM medicines_master WHERE UPPER(TRIM(name)) = ?`,
+          [rawName]
+        );
+
+        if (existingMeds.length > 0) {
+          resolvedMedId = existingMeds[0].id;
+          this.safeRun(
+            `UPDATE medicines_master SET
+              hsn_code = COALESCE(NULLIF(?, ''), hsn_code),
+              pack_size = COALESCE(NULLIF(?, ''), pack_size),
+              mfg_by = COALESCE(NULLIF(?, ''), mfg_by),
+              gst_percent = ?,
+              updated_at = ?
+             WHERE id = ?`,
+            [item.hsn_code || '3004', item.pack_size || '', item.mfg_by || '', item.gst_percent || 5, purchase.created_at, resolvedMedId]
+          );
+        } else {
+          resolvedMedId = resolvedMedId || `MED_${Date.now()}_${idx + 1}`;
+          this.safeRun(
+            `INSERT INTO medicines_master (
+              id, name, hsn_code, pack_size, mfg_by, salt_composition, gst_percent,
+              barcode_gtin, min_stock_alert, default_discount_percent, updated_at, sync_status
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            [
+              resolvedMedId, rawName, item.hsn_code || '3004', item.pack_size || '',
+              item.mfg_by || '', '', item.gst_percent ?? 5,
+              '', 20, 0, purchase.created_at, 'PENDING'
+            ]
+          );
+        }
+
+        // Scheme Quantities & Total Inward Physical Units
+        const billedQty = Number(item.billed_qty) || 0;
+        const freeQty = Number(item.free_qty) || 0;
+        const totalInwardUnits = billedQty + freeQty;
+
+        const rawBatchNo = (item.batch_no || 'DEFAULT').trim().toUpperCase();
+        const expIso = parseExpDateToIso(item.exp_date_mm_yy);
+        const defaultSaleRate = Math.round((item.net_landing_cost || item.purchase_rate) * 1.25 * 100) / 100;
+
+        // Auto-Create or Increment Batch in inventory_batches
+        let resolvedBatchId = item.batch_id;
+        const existingBatches = await this.query<{ id: string; available_qty: number }>(
+          `SELECT id, available_qty FROM inventory_batches WHERE medicine_id = ? AND UPPER(TRIM(batch_no)) = ?`,
+          [resolvedMedId, rawBatchNo]
+        );
+
+        if (existingBatches.length > 0) {
+          resolvedBatchId = existingBatches[0].id;
+          this.safeRun(
+            `UPDATE inventory_batches SET
+              available_qty = available_qty + ?,
+              mrp = ?,
+              old_mrp = ?,
+              purchase_rate = ?,
+              purchase_discount_percent = ?,
+              gst_percent = ?,
+              scheme_billed_qty = ?,
+              scheme_free_qty = ?,
+              net_landing_cost = ?,
+              default_sale_rate = ?,
+              exp_date_mm_yy = ?,
+              exp_date_iso = ?,
+              last_vendor_id = ?,
+              updated_at = ?
+             WHERE id = ?`,
+            [
+              totalInwardUnits,
+              item.mrp || 0,
+              item.old_mrp || 0,
+              item.purchase_rate || 0,
+              item.discount_percent || 0,
+              item.gst_percent || 0,
+              billedQty,
+              freeQty,
+              item.net_landing_cost || item.purchase_rate,
+              defaultSaleRate,
+              item.exp_date_mm_yy || '',
+              expIso,
+              purchase.vendor_id,
+              purchase.created_at,
+              resolvedBatchId
+            ]
+          );
+        } else {
+          resolvedBatchId = resolvedBatchId || `BATCH_${resolvedMedId}_${rawBatchNo.replace(/[^A-Z0-9]/g, '_')}`;
+          this.safeRun(
+            `INSERT INTO inventory_batches (
+              id, medicine_id, batch_no, exp_date_mm_yy, exp_date_iso, mrp, old_mrp,
+              purchase_rate, purchase_discount_percent, gst_percent, scheme_billed_qty,
+              scheme_free_qty, net_landing_cost, default_sale_rate, available_qty,
+              last_vendor_id, rack_location, updated_at, sync_status
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            [
+              resolvedBatchId, resolvedMedId, rawBatchNo,
+              item.exp_date_mm_yy || '', expIso, item.mrp || 0, item.old_mrp || 0,
+              item.purchase_rate || 0, item.discount_percent || 0, item.gst_percent || 0,
+              billedQty, freeQty, item.net_landing_cost || item.purchase_rate,
+              defaultSaleRate, totalInwardUnits, purchase.vendor_id,
+              'GEN', purchase.created_at, 'PENDING'
+            ]
+          );
+        }
+
+        // Insert into purchase_items
+        this.safeRun(
           `INSERT INTO purchase_items (
             id, purchase_id, medicine_id, batch_id, product_name, hsn_code, pack_size,
             mfg_by, batch_no, exp_date_mm_yy, billed_qty, free_qty, mrp, old_mrp,
@@ -626,55 +718,23 @@ class DatabaseService {
             sgst_amount, igst_amount, line_total, net_landing_cost
           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
           [
-            item.id, item.purchase_id, item.medicine_id, item.batch_id, item.product_name,
-            item.hsn_code, item.pack_size, item.mfg_by, item.batch_no, item.exp_date_mm_yy,
-            item.billed_qty, item.free_qty, item.mrp, item.old_mrp, item.purchase_rate,
-            item.discount_percent, item.taxable_amount, item.gst_percent, item.cgst_amount,
-            item.sgst_amount, item.igst_amount, item.line_total, item.net_landing_cost
-          ]
-        );
-
-        // Convert MM/YY to ISO YYYY-MM-DD
-        const expIso = parseExpDateToIso(item.exp_date_mm_yy);
-        const totalUnitsAdded = (item.billed_qty || 0) + (item.free_qty || 0);
-
-        // Calculate default sale rate with reasonable wholesale margin (e.g., 20% over net landing or standard)
-        const defaultSaleRate = Math.round(item.net_landing_cost * 1.25 * 100) / 100;
-
-        // Upsert inventory batch (increment available_qty)
-        db.run(
-          `INSERT INTO inventory_batches (
-            id, medicine_id, batch_no, exp_date_mm_yy, exp_date_iso, mrp, old_mrp,
-            purchase_rate, purchase_discount_percent, gst_percent, scheme_billed_qty,
-            scheme_free_qty, net_landing_cost, default_sale_rate, available_qty,
-            last_vendor_id, rack_location, updated_at, sync_status
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-          ON CONFLICT(medicine_id, batch_no) DO UPDATE SET
-            available_qty = inventory_batches.available_qty + excluded.available_qty,
-            mrp = excluded.mrp,
-            old_mrp = excluded.old_mrp,
-            purchase_rate = excluded.purchase_rate,
-            net_landing_cost = excluded.net_landing_cost,
-            scheme_billed_qty = excluded.scheme_billed_qty,
-            scheme_free_qty = excluded.scheme_free_qty,
-            last_vendor_id = excluded.last_vendor_id,
-            updated_at = excluded.updated_at`,
-          [
-            item.batch_id, item.medicine_id, item.batch_no.toUpperCase().trim(),
-            item.exp_date_mm_yy, expIso, item.mrp, item.old_mrp, item.purchase_rate,
-            item.discount_percent, item.gst_percent, item.billed_qty, item.free_qty,
-            item.net_landing_cost, defaultSaleRate, totalUnitsAdded,
-            purchase.vendor_id, 'GEN', purchase.created_at, 'PENDING'
+            item.id || `PITEM_${purchase.id}_${idx + 1}`,
+            purchase.id, resolvedMedId, resolvedBatchId, rawName,
+            item.hsn_code || '3004', item.pack_size || '', item.mfg_by || '', rawBatchNo,
+            item.exp_date_mm_yy || '', billedQty, freeQty, item.mrp || 0, item.old_mrp || 0,
+            item.purchase_rate || 0, item.discount_percent || 0, item.taxable_amount || 0,
+            item.gst_percent || 0, item.cgst_amount || 0, item.sgst_amount || 0,
+            item.igst_amount || 0, item.line_total || 0, item.net_landing_cost || 0
           ]
         );
       }
 
-      // 2.4 Update Vendor Ledger and Current Balance
+      // 2.3 Update Vendor Ledger & Current Balance
       const vendRows = await this.query<Party>(`SELECT current_balance FROM parties WHERE id = ?`, [purchase.vendor_id]);
       const prevBal = vendRows.length > 0 ? vendRows[0].current_balance : 0;
       const newBalAfterBill = prevBal + purchase.grand_total; // Vendor payable increases
 
-      db.run(
+      this.safeRun(
         `INSERT INTO party_ledger_transactions (
           id, party_id, transaction_date, voucher_type, voucher_no, reference_id,
           debit_amount, credit_amount, running_balance, payment_method, narration, created_at
@@ -699,7 +759,7 @@ class DatabaseService {
 
       if (purchase.amount_paid > 0) {
         finalVendorBalance = newBalAfterBill - purchase.amount_paid;
-        db.run(
+        this.safeRun(
           `INSERT INTO party_ledger_transactions (
             id, party_id, transaction_date, voucher_type, voucher_no, reference_id,
             debit_amount, credit_amount, running_balance, payment_method, narration, created_at
@@ -721,13 +781,13 @@ class DatabaseService {
         );
       }
 
-      db.run(
+      this.safeRun(
         `UPDATE parties SET current_balance = ?, updated_at = ? WHERE id = ?`,
         [finalVendorBalance, purchase.created_at, purchase.vendor_id]
       );
 
       // Enqueue sync
-      db.run(
+      this.safeRun(
         `INSERT INTO sync_queue (id, table_name, record_id, action, payload, status, created_at)
          VALUES (?, ?, ?, ?, ?, ?, ?)`,
         [
@@ -750,12 +810,59 @@ class DatabaseService {
     }
   }
 
+  // Cancel/Delete Purchase Bill (Restores inventory batches & reverses vendor balance)
+  async deletePurchaseTransaction(purchaseId: string): Promise<void> {
+    const db = await this.getDb();
+    db.exec('BEGIN TRANSACTION;');
+    try {
+      const purchases = await this.query<Purchase>(`SELECT * FROM purchases WHERE id = ?`, [purchaseId]);
+      if (purchases.length === 0) throw new Error('Purchase bill not found');
+      const purchase = purchases[0];
+
+      const items = await this.query<PurchaseItem>(`SELECT * FROM purchase_items WHERE purchase_id = ?`, [purchaseId]);
+
+      // Deduct batches that were added by this purchase
+      for (const it of items) {
+        const unitsToRemove = (it.billed_qty || 0) + (it.free_qty || 0);
+        this.safeRun(
+          `UPDATE inventory_batches
+           SET available_qty = MAX(0, available_qty - ?),
+               updated_at = ?
+           WHERE id = ?`,
+          [unitsToRemove, new Date().toISOString(), it.batch_id]
+        );
+      }
+
+      // Reverse vendor balance
+      const vendRows = await this.query<Party>(`SELECT current_balance FROM parties WHERE id = ?`, [purchase.vendor_id]);
+      if (vendRows.length > 0) {
+        const netReversal = purchase.grand_total - (purchase.amount_paid || 0);
+        const newBal = vendRows[0].current_balance - netReversal;
+        this.safeRun(
+          `UPDATE parties SET current_balance = ?, updated_at = ? WHERE id = ?`,
+          [newBal, new Date().toISOString(), purchase.vendor_id]
+        );
+      }
+
+      // Delete records
+      this.safeRun(`DELETE FROM party_ledger_transactions WHERE reference_id = ?`, [purchaseId]);
+      this.safeRun(`DELETE FROM purchase_items WHERE purchase_id = ?`, [purchaseId]);
+      this.safeRun(`DELETE FROM purchases WHERE id = ?`, [purchaseId]);
+
+      db.exec('COMMIT;');
+      this.notifyChange();
+    } catch (err) {
+      db.exec('ROLLBACK;');
+      throw err;
+    }
+  }
+
   // 3. ATOMIC RETURN / ADJUSTMENT / DEBIT NOTE / CREDIT NOTE
   async saveAdjustmentTransaction(adj: ReturnAdjustment): Promise<void> {
     const db = await this.getDb();
     db.exec('BEGIN TRANSACTION;');
     try {
-      db.run(
+      this.safeRun(
         `INSERT INTO returns_adjustments (
           id, voucher_no, adjustment_type, voucher_date, party_id,
           medicine_id, batch_id, batch_no, qty, unit_rate, gst_percent,
@@ -770,14 +877,12 @@ class DatabaseService {
 
       // Stock adjustments
       if (adj.adjustment_type === 'PURCHASE_RETURN_DEBIT_NOTE' || adj.adjustment_type === 'EXPIRY_BREAKAGE_WRITE_OFF' || adj.adjustment_type === 'STOCK_SHORTAGE') {
-        // Reduce stock from batch
-        db.run(
+        this.safeRun(
           `UPDATE inventory_batches SET available_qty = MAX(0, available_qty - ?), updated_at = ? WHERE id = ?`,
           [adj.qty, adj.created_at, adj.batch_id]
         );
       } else if (adj.adjustment_type === 'SALES_RETURN_CREDIT_NOTE' || adj.adjustment_type === 'STOCK_SURPLUS') {
-        // Increase stock back in batch
-        db.run(
+        this.safeRun(
           `UPDATE inventory_batches SET available_qty = available_qty + ?, updated_at = ? WHERE id = ?`,
           [adj.qty, adj.created_at, adj.batch_id]
         );
@@ -790,9 +895,8 @@ class DatabaseService {
           const party = partyRows[0];
           let newBal = party.current_balance;
           if (adj.adjustment_type === 'PURCHASE_RETURN_DEBIT_NOTE') {
-            // Reduces payable to vendor
             newBal = party.current_balance - adj.total_amount;
-            db.run(
+            this.safeRun(
               `INSERT INTO party_ledger_transactions (
                 id, party_id, transaction_date, voucher_type, voucher_no, reference_id,
                 debit_amount, credit_amount, running_balance, payment_method, narration, created_at
@@ -813,9 +917,8 @@ class DatabaseService {
               ]
             );
           } else if (adj.adjustment_type === 'SALES_RETURN_CREDIT_NOTE') {
-            // Reduces receivable from customer
             newBal = party.current_balance - adj.total_amount;
-            db.run(
+            this.safeRun(
               `INSERT INTO party_ledger_transactions (
                 id, party_id, transaction_date, voucher_type, voucher_no, reference_id,
                 debit_amount, credit_amount, running_balance, payment_method, narration, created_at
@@ -836,7 +939,7 @@ class DatabaseService {
               ]
             );
           }
-          db.run(`UPDATE parties SET current_balance = ?, updated_at = ? WHERE id = ?`, [newBal, adj.created_at, adj.party_id]);
+          this.safeRun(`UPDATE parties SET current_balance = ?, updated_at = ? WHERE id = ?`, [newBal, adj.created_at, adj.party_id]);
         }
       }
 
@@ -870,11 +973,9 @@ class DatabaseService {
       let credit = 0;
 
       if (data.voucher_type === 'PAYMENT_RECEIVED') {
-        // Customer paid money, reduce receivable
         newBalance = party.current_balance - data.amount;
         credit = data.amount;
       } else {
-        // Radha Drugs paid supplier, reduce payable
         newBalance = party.current_balance - data.amount;
         debit = data.amount;
       }
@@ -882,7 +983,7 @@ class DatabaseService {
       const voucherNo = `${data.voucher_type === 'PAYMENT_RECEIVED' ? 'RCPT' : 'PAY'}-${Date.now().toString().slice(-6)}`;
       const now = new Date().toISOString().replace('T', ' ').substring(0, 19);
 
-      db.run(
+      this.safeRun(
         `INSERT INTO party_ledger_transactions (
           id, party_id, transaction_date, voucher_type, voucher_no, reference_id,
           debit_amount, credit_amount, running_balance, payment_method, narration, created_at
@@ -903,7 +1004,7 @@ class DatabaseService {
         ]
       );
 
-      db.run(`UPDATE parties SET current_balance = ?, updated_at = ? WHERE id = ?`, [newBalance, now, data.party_id]);
+      this.safeRun(`UPDATE parties SET current_balance = ?, updated_at = ? WHERE id = ?`, [newBalance, now, data.party_id]);
 
       db.exec('COMMIT;');
       this.notifyChange();
@@ -914,6 +1015,132 @@ class DatabaseService {
     }
   }
 
+  // 5. MANUAL OPENING STOCK BATCH CREATION & EDITING
+  async addOrUpdateManualBatch(data: {
+    id?: string;
+    medicine_name: string;
+    hsn_code?: string;
+    pack_size?: string;
+    mfg_by?: string;
+    batch_no: string;
+    exp_date_mm_yy: string;
+    mrp: number;
+    old_mrp?: number;
+    purchase_rate: number;
+    purchase_discount_percent?: number;
+    gst_percent: number;
+    default_sale_rate?: number;
+    available_qty: number;
+    rack_location?: string;
+  }): Promise<void> {
+    const db = await this.getDb();
+    const now = new Date().toISOString().replace('T', ' ').substring(0, 19);
+    const rawMedName = data.medicine_name.trim().toUpperCase();
+    const rawBatchNo = data.batch_no.trim().toUpperCase();
+    const expIso = parseExpDateToIso(data.exp_date_mm_yy);
+    const saleRate = data.default_sale_rate || Math.round(data.purchase_rate * 1.25 * 100) / 100;
+
+    db.exec('BEGIN TRANSACTION;');
+    try {
+      // 1. Ensure medicine exists
+      let medId: string;
+      const existingMeds = await this.query<{ id: string }>(`SELECT id FROM medicines_master WHERE UPPER(TRIM(name)) = ?`, [rawMedName]);
+      if (existingMeds.length > 0) {
+        medId = existingMeds[0].id;
+        this.safeRun(
+          `UPDATE medicines_master SET
+            hsn_code = COALESCE(NULLIF(?, ''), hsn_code),
+            pack_size = COALESCE(NULLIF(?, ''), pack_size),
+            mfg_by = COALESCE(NULLIF(?, ''), mfg_by),
+            gst_percent = ?,
+            updated_at = ?
+           WHERE id = ?`,
+          [data.hsn_code || '3004', data.pack_size || '', data.mfg_by || '', data.gst_percent || 5, now, medId]
+        );
+      } else {
+        medId = `MED_${Date.now()}`;
+        this.safeRun(
+          `INSERT INTO medicines_master (
+            id, name, hsn_code, pack_size, mfg_by, salt_composition, gst_percent,
+            barcode_gtin, min_stock_alert, default_discount_percent, updated_at, sync_status
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          [
+            medId, rawMedName, data.hsn_code || '3004', data.pack_size || '',
+            data.mfg_by || '', '', data.gst_percent || 5,
+            '', 20, 0, now, 'PENDING'
+          ]
+        );
+      }
+
+      // 2. Insert or update batch
+      let batchId = data.id;
+      if (!batchId) {
+        const existingBatches = await this.query<{ id: string }>(
+          `SELECT id FROM inventory_batches WHERE medicine_id = ? AND UPPER(TRIM(batch_no)) = ?`,
+          [medId, rawBatchNo]
+        );
+        if (existingBatches.length > 0) {
+          batchId = existingBatches[0].id;
+        } else {
+          batchId = `BATCH_${medId}_${rawBatchNo.replace(/[^A-Z0-9]/g, '_')}`;
+        }
+      }
+
+      this.safeRun(
+        `INSERT INTO inventory_batches (
+          id, medicine_id, batch_no, exp_date_mm_yy, exp_date_iso, mrp, old_mrp,
+          purchase_rate, purchase_discount_percent, gst_percent, scheme_billed_qty,
+          scheme_free_qty, net_landing_cost, default_sale_rate, available_qty,
+          last_vendor_id, rack_location, updated_at, sync_status
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(id) DO UPDATE SET
+          batch_no = excluded.batch_no,
+          exp_date_mm_yy = excluded.exp_date_mm_yy,
+          exp_date_iso = excluded.exp_date_iso,
+          mrp = excluded.mrp,
+          old_mrp = excluded.old_mrp,
+          purchase_rate = excluded.purchase_rate,
+          purchase_discount_percent = excluded.purchase_discount_percent,
+          gst_percent = excluded.gst_percent,
+          net_landing_cost = excluded.net_landing_cost,
+          default_sale_rate = excluded.default_sale_rate,
+          available_qty = excluded.available_qty,
+          rack_location = excluded.rack_location,
+          updated_at = excluded.updated_at`,
+        [
+          batchId, medId, rawBatchNo, data.exp_date_mm_yy, expIso, data.mrp, data.old_mrp || 0,
+          data.purchase_rate, data.purchase_discount_percent || 0, data.gst_percent,
+          data.available_qty, 0, data.purchase_rate, saleRate, data.available_qty,
+          null, data.rack_location || 'GEN', now, 'PENDING'
+        ]
+      );
+
+      db.exec('COMMIT;');
+      this.notifyChange();
+    } catch (err) {
+      db.exec('ROLLBACK;');
+      throw err;
+    }
+  }
+
+  // Delete an inventory batch
+  async deleteBatch(batchId: string): Promise<void> {
+    const db = await this.getDb();
+    this.safeRun(`DELETE FROM inventory_batches WHERE id = ?`, [batchId]);
+    this.notifyChange();
+  }
+
+  // Delete a party (if no transactions)
+  async deleteParty(partyId: string): Promise<void> {
+    const db = await this.getDb();
+    const ledgerCount = await this.query<{ count: number }>(`SELECT COUNT(*) as count FROM party_ledger_transactions WHERE party_id = ?`, [partyId]);
+    if (ledgerCount.length > 0 && ledgerCount[0].count > 0) {
+      throw new Error('Cannot delete this party because ledger transactions exist under their account.');
+    }
+    this.safeRun(`DELETE FROM parties WHERE id = ?`, [partyId]);
+    this.notifyChange();
+  }
+
   // Helper to upsert a Party
   async upsertParty(party: Partial<Party>): Promise<void> {
     const db = await this.getDb();
@@ -921,7 +1148,7 @@ class DatabaseService {
     const id = party.id || `PARTY_${Date.now()}`;
     const isNew = !party.id;
 
-    db.run(
+    this.safeRun(
       `INSERT INTO parties (
         id, party_type, is_gst_registered, gstin, name, legal_name, dl_no, fssai_no,
         phone, address, city, state_name, state_code, opening_balance, current_balance,
@@ -967,9 +1194,9 @@ class DatabaseService {
       ]
     );
 
-    // If opening balance > 0 and party is new, record in ledger
-    if (isNew && (party.opening_balance || 0) > 0) {
-      db.run(
+    // If opening balance != 0 and party is new, record in ledger
+    if (isNew && (party.opening_balance || 0) !== 0) {
+      this.safeRun(
         `INSERT INTO party_ledger_transactions (
           id, party_id, transaction_date, voucher_type, voucher_no, reference_id,
           debit_amount, credit_amount, running_balance, payment_method, narration, created_at
@@ -1010,7 +1237,7 @@ class DatabaseService {
 
     const backup = {
       exportTimestamp: new Date().toISOString(),
-      version: '1.0',
+      version: '2.0',
       company: 'RADHA DRUGS',
       data: {
         profile,
@@ -1037,7 +1264,6 @@ class DatabaseService {
     const db = await this.getDb();
     db.exec('BEGIN TRANSACTION;');
     try {
-      // Clear existing tables
       const tables = [
         'purchase_items', 'sale_items', 'purchases', 'sales',
         'returns_adjustments', 'party_ledger_transactions',
@@ -1048,61 +1274,60 @@ class DatabaseService {
         db.exec(`DELETE FROM ${t};`);
       }
 
-      // Re-populate from backup
       const d = backup.data;
       if (d.profile) {
         for (const p of d.profile) {
-          db.run(`INSERT INTO company_profile VALUES (${Object.keys(p).map(() => '?').join(',')})`, Object.values(p));
+          this.safeRun(`INSERT INTO company_profile VALUES (${Object.keys(p).map(() => '?').join(',')})`, Object.values(p));
         }
       }
       if (d.parties) {
         for (const p of d.parties) {
-          db.run(`INSERT INTO parties VALUES (${Object.keys(p).map(() => '?').join(',')})`, Object.values(p));
+          this.safeRun(`INSERT INTO parties VALUES (${Object.keys(p).map(() => '?').join(',')})`, Object.values(p));
         }
       }
       if (d.medicines) {
         for (const m of d.medicines) {
-          db.run(`INSERT INTO medicines_master VALUES (${Object.keys(m).map(() => '?').join(',')})`, Object.values(m));
+          this.safeRun(`INSERT INTO medicines_master VALUES (${Object.keys(m).map(() => '?').join(',')})`, Object.values(m));
         }
       }
       if (d.batches) {
         for (const b of d.batches) {
-          db.run(`INSERT INTO inventory_batches VALUES (${Object.keys(b).map(() => '?').join(',')})`, Object.values(b));
+          this.safeRun(`INSERT INTO inventory_batches VALUES (${Object.keys(b).map(() => '?').join(',')})`, Object.values(b));
         }
       }
       if (d.purchases) {
         for (const p of d.purchases) {
-          db.run(`INSERT INTO purchases VALUES (${Object.keys(p).map(() => '?').join(',')})`, Object.values(p));
+          this.safeRun(`INSERT INTO purchases VALUES (${Object.keys(p).map(() => '?').join(',')})`, Object.values(p));
         }
       }
       if (d.purchaseItems) {
         for (const pi of d.purchaseItems) {
-          db.run(`INSERT INTO purchase_items VALUES (${Object.keys(pi).map(() => '?').join(',')})`, Object.values(pi));
+          this.safeRun(`INSERT INTO purchase_items VALUES (${Object.keys(pi).map(() => '?').join(',')})`, Object.values(pi));
         }
       }
       if (d.sales) {
         for (const s of d.sales) {
-          db.run(`INSERT INTO sales VALUES (${Object.keys(s).map(() => '?').join(',')})`, Object.values(s));
+          this.safeRun(`INSERT INTO sales VALUES (${Object.keys(s).map(() => '?').join(',')})`, Object.values(s));
         }
       }
       if (d.saleItems) {
         for (const si of d.saleItems) {
-          db.run(`INSERT INTO sale_items VALUES (${Object.keys(si).map(() => '?').join(',')})`, Object.values(si));
+          this.safeRun(`INSERT INTO sale_items VALUES (${Object.keys(si).map(() => '?').join(',')})`, Object.values(si));
         }
       }
       if (d.adjustments) {
         for (const a of d.adjustments) {
-          db.run(`INSERT INTO returns_adjustments VALUES (${Object.keys(a).map(() => '?').join(',')})`, Object.values(a));
+          this.safeRun(`INSERT INTO returns_adjustments VALUES (${Object.keys(a).map(() => '?').join(',')})`, Object.values(a));
         }
       }
       if (d.ledger) {
         for (const l of d.ledger) {
-          db.run(`INSERT INTO party_ledger_transactions VALUES (${Object.keys(l).map(() => '?').join(',')})`, Object.values(l));
+          this.safeRun(`INSERT INTO party_ledger_transactions VALUES (${Object.keys(l).map(() => '?').join(',')})`, Object.values(l));
         }
       }
       if (d.customerRates) {
         for (const cr of d.customerRates) {
-          db.run(`INSERT INTO customer_rate_memory VALUES (${Object.keys(cr).map(() => '?').join(',')})`, Object.values(cr));
+          this.safeRun(`INSERT INTO customer_rate_memory VALUES (${Object.keys(cr).map(() => '?').join(',')})`, Object.values(cr));
         }
       }
 
@@ -1113,28 +1338,6 @@ class DatabaseService {
       throw e;
     }
   }
-
-  // Reset to initial seed state
-  async resetToSeedData(): Promise<void> {
-    await this.idb.clear();
-    const db = await this.getDb();
-    const tables = [
-      'purchase_items', 'sale_items', 'purchases', 'sales',
-      'returns_adjustments', 'party_ledger_transactions',
-      'customer_rate_memory', 'inventory_batches', 'medicines_master',
-      'parties', 'company_profile', 'sync_queue'
-    ];
-    for (const t of tables) {
-      db.exec(`DELETE FROM ${t};`);
-    }
-    this.seedDatabase();
-    await this.saveToStorage();
-    this.notifyChange();
-  }
-}
-
-function mfg_by(val?: string): string {
-  return val ? val.toUpperCase().trim() : '';
 }
 
 // Convert "07/31" -> "2031-07-31" or "05/28" -> "2028-05-31"
@@ -1146,7 +1349,7 @@ export function parseExpDateToIso(mmYy: string): string {
   const yy = parts[1].length === 2 ? `20${parts[1]}` : parts[1];
   const month = parseInt(mm, 10);
   const year = parseInt(yy, 10);
-  // Last day of month
+  if (isNaN(month) || isNaN(year) || month < 1 || month > 12) return '2030-12-31';
   const lastDay = new Date(year, month, 0).getDate();
   return `${year}-${mm}-${String(lastDay).padStart(2, '0')}`;
 }

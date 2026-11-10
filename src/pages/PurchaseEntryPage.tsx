@@ -88,10 +88,8 @@ export const PurchaseEntryPage: React.FC<PurchaseEntryPageProps> = ({ company })
       setVendors(vends);
 
       if (!selectedVendorId && vends.length > 0) {
-        // Pre-select Indizen Pharmaceutical if available
-        const indizen = vends.find((v) => v.name.includes('INDIZEN')) || vends[0];
-        setSelectedVendorId(indizen.id);
-        setSelectedVendor(indizen);
+        setSelectedVendorId(vends[0].id);
+        setSelectedVendor(vends[0]);
       }
 
       const meds = await dbService.query<MedicineMaster>('SELECT * FROM medicines_master ORDER BY name ASC');
@@ -104,8 +102,23 @@ export const PurchaseEntryPage: React.FC<PurchaseEntryPageProps> = ({ company })
   useEffect(() => {
     loadMasterData();
     const unsub = dbService.subscribe(loadMasterData);
-    return unsub;
-  }, []);
+
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'F10' || (e.altKey && e.key.toLowerCase() === 's')) {
+        e.preventDefault();
+        handleSavePurchaseBill();
+      } else if (e.key === 'F2') {
+        e.preventDefault();
+        handleAddNewRow();
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+
+    return () => {
+      unsub();
+      window.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [items, selectedVendor, supplierInvoiceNo, invoiceDate, paymentMode, amountPaid, notes]);
 
   const isInterState = selectedVendor ? selectedVendor.state_code !== '10' : true;
 
@@ -177,14 +190,14 @@ export const PurchaseEntryPage: React.FC<PurchaseEntryPageProps> = ({ company })
   const handleAddNewRow = () => {
     const empty = calculateRowMath({
       product_name: '',
-      billed_qty: 100,
-      free_qty: 20,
-      raw_qty_input: '100+20',
-      purchase_rate: 19.9,
-      mrp: 159.38,
-      gst_percent: 5,
+      billed_qty: 0,
+      free_qty: 0,
+      raw_qty_input: '',
+      purchase_rate: 0,
+      mrp: 0,
+      gst_percent: 12,
     });
-    setItems([...items, empty]);
+    setItems((prev) => [...prev, empty]);
   };
 
   // Preload initial row if empty
@@ -224,13 +237,69 @@ export const PurchaseEntryPage: React.FC<PurchaseEntryPageProps> = ({ company })
   };
 
   // Handle transfer from AI Scanner Modal
-  const handleApplyAiExtraction = (extracted: ExtractedInvoice) => {
+  const handleApplyAiExtraction = async (extracted: ExtractedInvoice) => {
     // If supplier matches a known vendor, select them
-    const matchedVendor = vendors.find(
+    let matchedVendor = vendors.find(
       (v) =>
-        v.gstin === extracted.vendor_gstin ||
-        v.name.toLowerCase().includes(extracted.vendor_name.toLowerCase())
+        (extracted.vendor_gstin && v.gstin && v.gstin.trim().toUpperCase() === extracted.vendor_gstin.trim().toUpperCase()) ||
+        (extracted.vendor_name && v.name.toLowerCase().includes(extracted.vendor_name.toLowerCase()))
     );
+
+    // If not found in current vendors list, auto-create vendor in DB so the user isn't blocked
+    if (!matchedVendor && extracted.vendor_name && extracted.vendor_name.trim().length > 0) {
+      const newVendorId = `PARTY_VEND_${Date.now()}`;
+      const stateCode = extracted.vendor_gstin && extracted.vendor_gstin.length >= 2
+        ? extracted.vendor_gstin.substring(0, 2)
+        : '10';
+      const autoVendor: Party = {
+        id: newVendorId,
+        party_type: 'VENDOR',
+        is_gst_registered: extracted.vendor_gstin ? 1 : 0,
+        gstin: extracted.vendor_gstin || '',
+        name: extracted.vendor_name.trim().toUpperCase(),
+        legal_name: extracted.vendor_name.trim().toUpperCase(),
+        dl_no: extracted.vendor_dl_no || '',
+        fssai_no: '',
+        phone: '',
+        address: extracted.vendor_address || '',
+        city: '',
+        state_name: stateCode === '10' ? 'BIHAR' : 'Other State',
+        state_code: stateCode,
+        opening_balance: 0,
+        current_balance: 0,
+        credit_limit: 500000,
+        gst_status: 'ACTIVE',
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+        sync_status: 'PENDING',
+      };
+
+      try {
+        await dbService.query(
+          `INSERT INTO parties (id, name, party_type, gstin, state_code, state_name, address, city, current_balance, credit_limit, created_at, sync_status)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          [
+            autoVendor.id,
+            autoVendor.name,
+            autoVendor.party_type,
+            autoVendor.gstin,
+            autoVendor.state_code,
+            autoVendor.state_name,
+            autoVendor.address,
+            autoVendor.city,
+            autoVendor.current_balance,
+            autoVendor.credit_limit,
+            autoVendor.created_at,
+            autoVendor.sync_status,
+          ]
+        );
+        matchedVendor = autoVendor;
+        setVendors((prev) => [...prev, autoVendor]);
+      } catch (e) {
+        console.warn('Could not auto-register extracted vendor:', e);
+      }
+    }
+
     if (matchedVendor) {
       setSelectedVendorId(matchedVendor.id);
       setSelectedVendor(matchedVendor);
@@ -240,7 +309,7 @@ export const PurchaseEntryPage: React.FC<PurchaseEntryPageProps> = ({ company })
     if (extracted.invoice_date) setInvoiceDate(extracted.invoice_date);
 
     // Convert items into PurchaseLineRow
-    const convertedRows: PurchaseLineRow[] = extracted.items.map((it, idx) => {
+    const convertedRows: PurchaseLineRow[] = extracted.items.map((it) => {
       const matchedMed = medicinesMaster.find(
         (m) => m.name.toLowerCase() === it.product_name.toLowerCase()
       );
@@ -263,7 +332,9 @@ export const PurchaseEntryPage: React.FC<PurchaseEntryPageProps> = ({ company })
       });
     });
 
-    setItems(convertedRows);
+    if (convertedRows.length > 0) {
+      setItems(convertedRows);
+    }
   };
 
   // Handle CSV Import

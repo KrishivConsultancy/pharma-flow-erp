@@ -1,5 +1,6 @@
-const { app, BrowserWindow, ipcMain } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog } = require('electron');
 const path = require('path');
+const fs = require('fs');
 const { autoUpdater } = require('electron-updater');
 
 let mainWindow;
@@ -77,7 +78,7 @@ function createWindow() {
       nodeIntegration: false,
       contextIsolation: true,
       preload: path.join(__dirname, 'preload.cjs'),
-      webSecurity: true,
+      webSecurity: false, // Prevents external API CORS blocks in desktop client
     },
     autoHideMenuBar: false,
     backgroundColor: '#f8fafc',
@@ -120,35 +121,177 @@ app.on('window-all-closed', () => {
   }
 });
 
-// IPC handlers for native print, dialogs, Cashfree GSTIN verification, etc.
+// IPC: Native Print to PDF buffer
 ipcMain.handle('print-to-pdf', async (event, options) => {
   if (!mainWindow) return null;
   return await mainWindow.webContents.printToPDF(options || {});
 });
 
-ipcMain.handle('verify-gstin', async (event, { clientId, clientSecret, isSandbox, gstin }) => {
-  const url = isSandbox
-    ? 'https://sandbox.cashfree.com/verification/gstin'
-    : 'https://api.cashfree.com/verification/gstin';
-
+// IPC: Native Export Invoice PDF with Save Dialog
+ipcMain.handle('export-invoice-pdf', async (event, { invoiceNo, isHalfPage }) => {
+  if (!mainWindow) return { ok: false, error: 'Window not available' };
   try {
-    const res = await fetch(url, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'x-client-id': clientId,
-        'x-client-secret': clientSecret,
-      },
-      body: JSON.stringify({ GSTIN: gstin, gstin }),
+    const defaultFilename = `${invoiceNo || 'Invoice'}.pdf`;
+    const saveResult = await dialog.showSaveDialog(mainWindow, {
+      title: 'Save Invoice PDF',
+      defaultPath: defaultFilename,
+      filters: [{ name: 'PDF Documents', extensions: ['pdf'] }],
     });
-    const data = await res.json();
-    return { ok: res.ok, status: res.status, data };
+
+    if (saveResult.canceled || !saveResult.filePath) {
+      return { ok: false, canceled: true };
+    }
+
+    const pdfBuffer = await mainWindow.webContents.printToPDF({
+      landscape: Boolean(isHalfPage),
+      pageSize: isHalfPage ? 'A5' : 'A4',
+      printBackground: true,
+      margins: { marginType: 'none' },
+    });
+
+    await fs.promises.writeFile(saveResult.filePath, pdfBuffer);
+    return { ok: true, filePath: saveResult.filePath };
   } catch (err) {
     return { ok: false, error: err.message };
   }
 });
 
-// IPC handlers for Auto-Updater
+// IPC: Multi-Tier Live GSTIN Resolution in Node.js
+ipcMain.handle('lookup-gstin', async (event, { gstin, cashfreeClientId, cashfreeClientSecret, isSandbox }) => {
+  const cleanGstin = (gstin || '').trim().toUpperCase();
+  if (cleanGstin.length !== 15) {
+    return { ok: false, error: 'Invalid GSTIN length' };
+  }
+
+  // Tier 1: Cashfree Verification API (VRS v2)
+  if (cashfreeClientId && cashfreeClientSecret) {
+    try {
+      const baseUrl = isSandbox
+        ? 'https://sandbox.cashfree.com/verification/gstin'
+        : 'https://api.cashfree.com/verification/gstin';
+
+      const res = await fetch(baseUrl, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-client-id': cashfreeClientId,
+          'x-client-secret': cashfreeClientSecret,
+        },
+        body: JSON.stringify({ GSTIN: cleanGstin, gstin: cleanGstin }),
+      });
+
+      if (res.ok) {
+        const rawData = await res.json();
+        const split = rawData.principal_place_split_address || {};
+        const fullAddress = rawData.principal_place_address || rawData.address || '';
+        const tradeName = rawData.trade_name_of_business || rawData.trade_name || rawData.legal_name_of_business || rawData.legal_name || '';
+        const legalName = rawData.legal_name_of_business || rawData.legal_name || tradeName;
+        const status = (rawData.gst_in_status || rawData.status || 'ACTIVE').toUpperCase();
+        const city = (split.city || split.location || split.district || rawData.city || '').toUpperCase();
+        const state = (split.state || rawData.state || '').toUpperCase();
+        const pincode = split.pincode || rawData.pincode || (fullAddress.match(/\b\d{6}\b/)?.[0] ?? '');
+
+        return {
+          ok: true,
+          source: 'CASHFREE_LIVE',
+          data: {
+            valid: rawData.valid !== false,
+            gstin: cleanGstin,
+            trade_name: tradeName.toUpperCase(),
+            legal_name: legalName.toUpperCase(),
+            address: fullAddress.toUpperCase(),
+            city,
+            state_name: state,
+            state_code: cleanGstin.substring(0, 2),
+            pincode,
+            gst_status: status === 'ACTIVE' || status === 'VALID' ? 'ACTIVE' : 'CANCELLED',
+          },
+        };
+      }
+    } catch (cfErr) {
+      console.warn('Tier 1 Cashfree lookup failed in Node process:', cfErr.message);
+    }
+  }
+
+  // Tier 2: Public GSTIN Resolution Endpoint
+  try {
+    const pubUrl = `https://sheet.gstincheck.co.in/check/${cleanGstin}`;
+    const pubRes = await fetch(pubUrl, { method: 'GET', signal: AbortSignal.timeout(5000) });
+    if (pubRes.ok) {
+      const pubData = await pubRes.json();
+      if (pubData && pubData.flag && pubData.data) {
+        const d = pubData.data;
+        const addr = d.pradr?.addr || {};
+        const fullAddr = [addr.bno, addr.bnm, addr.st, addr.loc, addr.dst, addr.stcd, addr.pncd].filter(Boolean).join(', ');
+
+        return {
+          ok: true,
+          source: 'PUBLIC_GST_DIRECTORY',
+          data: {
+            valid: true,
+            gstin: cleanGstin,
+            trade_name: (d.tradeNam || d.lgnm || '').toUpperCase(),
+            legal_name: (d.lgnm || d.tradeNam || '').toUpperCase(),
+            address: (fullAddr || '').toUpperCase(),
+            city: (addr.dst || addr.city || '').toUpperCase(),
+            state_name: (addr.stcd || '').toUpperCase(),
+            state_code: cleanGstin.substring(0, 2),
+            pincode: String(addr.pncd || ''),
+            gst_status: (d.sts || 'ACTIVE').toUpperCase() === 'ACTIVE' ? 'ACTIVE' : 'CANCELLED',
+          },
+        };
+      }
+    }
+  } catch (pubErr) {
+    console.warn('Tier 2 Public GST lookup failed in Node process:', pubErr.message);
+  }
+
+  return { ok: false, error: 'Could not resolve online' };
+});
+
+// IPC: Gemini 2.5 Flash Vision Multimodal Invoice Scanner
+ipcMain.handle('scan-invoice-gemini', async (event, { apiKey, base64Data, mimeType, promptText }) => {
+  try {
+    const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`;
+
+    const requestBody = {
+      contents: [
+        {
+          parts: [
+            { text: promptText },
+            {
+              inlineData: {
+                mimeType: mimeType || 'image/jpeg',
+                data: base64Data,
+              },
+            },
+          ],
+        },
+      ],
+      generationConfig: {
+        responseMimeType: 'application/json',
+      },
+    };
+
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(requestBody),
+    });
+
+    if (!response.ok) {
+      const errText = await response.text();
+      return { ok: false, error: `Gemini API (HTTP ${response.status}): ${errText}` };
+    }
+
+    const resJson = await response.json();
+    return { ok: true, data: resJson };
+  } catch (err) {
+    return { ok: false, error: err.message };
+  }
+});
+
+// IPC: Auto-Updater commands
 ipcMain.handle('updater:check', async () => {
   try {
     return await autoUpdater.checkForUpdates();

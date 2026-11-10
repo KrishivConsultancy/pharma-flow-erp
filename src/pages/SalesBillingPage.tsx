@@ -98,6 +98,8 @@ export const SalesBillingPage: React.FC<SalesBillingPageProps> = ({
   const [printModalOpen, setPrintModalOpen] = useState<boolean>(false);
   const [savedSaleForPrint, setSavedSaleForPrint] = useState<Sale | null>(null);
   const [savedItemsForPrint, setSavedItemsForPrint] = useState<SaleItem[]>([]);
+  const [recentBillsOpen, setRecentBillsOpen] = useState<boolean>(false);
+  const [recentSales, setRecentSales] = useState<Sale[]>([]);
 
   // Search input dropdown states
   const [activeSearchIndex, setActiveSearchIndex] = useState<number | null>(null);
@@ -145,8 +147,58 @@ export const SalesBillingPage: React.FC<SalesBillingPageProps> = ({
           setInvoiceNo(`${prof.simple_bill_prefix || 'S'}${String(nextNum).padStart(6, '0')}`);
         }
       }
+      // Load recent sales
+      const sales = await dbService.query<Sale>(
+        `SELECT s.*, p.name as customer_name, p.phone as customer_phone, p.dl_no as customer_dl_no, p.gstin as customer_gstin, (p.address || ', ' || p.city) as customer_address
+         FROM sales s
+         LEFT JOIN parties p ON s.customer_id = p.id
+         ORDER BY s.created_at DESC LIMIT 50`
+      );
+      setRecentSales(sales);
     } catch (err) {
       console.error('Failed to load sales master data:', err);
+    }
+  };
+
+  const loadRecentSales = async () => {
+    try {
+      const sales = await dbService.query<Sale>(
+        `SELECT s.*, p.name as customer_name, p.phone as customer_phone, p.dl_no as customer_dl_no, p.gstin as customer_gstin, (p.address || ', ' || p.city) as customer_address
+         FROM sales s
+         LEFT JOIN parties p ON s.customer_id = p.id
+         ORDER BY s.created_at DESC LIMIT 50`
+      );
+      setRecentSales(sales);
+    } catch (err) {
+      console.error('Failed to load recent sales:', err);
+    }
+  };
+
+  const handleDeleteSaleBill = async (sale: Sale) => {
+    const confirmMsg = `⚠️ CANCEL & DELETE SALE BILL ${sale.invoice_no}?\n\nThis will:\n1. Restore all deducted batch quantities back into stock.\n2. Reverse the customer ledger balance by ₹${sale.net_amount.toFixed(2)}.\n\nAre you sure you want to proceed?`;
+    if (!window.confirm(confirmMsg)) return;
+
+    try {
+      await dbService.deleteSaleTransaction(sale.id);
+      alert(`✅ Sale Bill ${sale.invoice_no} has been cancelled and deleted. Stock and ledger reversed.`);
+      await loadRecentSales();
+      await loadMasterData();
+    } catch (err: any) {
+      alert(`Failed to delete sale bill: ${err.message}`);
+    }
+  };
+
+  const handleReprintSaleBill = async (sale: Sale) => {
+    try {
+      const saleItems = await dbService.query<SaleItem>(
+        `SELECT * FROM sale_items WHERE sale_id = ?`,
+        [sale.id]
+      );
+      setSavedSaleForPrint(sale);
+      setSavedItemsForPrint(saleItems);
+      setPrintModalOpen(true);
+    } catch (err: any) {
+      alert(`Failed to load bill items for re-print: ${err.message}`);
     }
   };
 
@@ -312,41 +364,12 @@ export const SalesBillingPage: React.FC<SalesBillingPageProps> = ({
     setItems([...items, emptyRow]);
   };
 
-  // Ensure at least 1 row on start
+  // Ensure at least 1 clean row on start
   useEffect(() => {
     if (items.length === 0) {
-      // Preload with Dispo 10ML as example or empty
-      const medDispo = medicines.find((m) => m.name === 'DISPO 10ML');
-      const batchDispo = allBatches.find((b) => b.batch_no === '635106NH2');
-      if (medDispo && batchDispo) {
-        const item1 = calculateRowMath(
-          {
-            medicine_id: medDispo.id,
-            batch_id: batchDispo.id,
-            product_name: medDispo.name,
-            hsn_code: medDispo.hsn_code,
-            pack_size: medDispo.pack_size,
-            mfg_by: medDispo.mfg_by,
-            batch_no: batchDispo.batch_no,
-            exp_date_mm_yy: batchDispo.exp_date_mm_yy,
-            available_qty: batchDispo.available_qty,
-            qty: 20,
-            free_qty: 0,
-            mrp: batchDispo.mrp,
-            net_landing_cost: batchDispo.net_landing_cost,
-            sale_rate: 240.0,
-            discount_percent: 0,
-            gst_percent: medDispo.gst_percent,
-          },
-          billType === 'GST_INVOICE',
-          isInterState
-        );
-        setItems([item1]);
-      } else {
-        handleAddNewRow();
-      }
+      handleAddNewRow();
     }
-  }, [medicines, allBatches]);
+  }, []);
 
   // Open Batch Picker for row
   const handleOpenBatchPicker = (index: number, med: MedicineMaster) => {
@@ -600,6 +623,18 @@ export const SalesBillingPage: React.FC<SalesBillingPageProps> = ({
                 className="px-2 py-0.5 font-bold border border-slate-300 dark:border-slate-700 dark:bg-slate-800"
               />
             </div>
+
+            <button
+              type="button"
+              onClick={async () => {
+                await loadRecentSales();
+                setRecentBillsOpen(true);
+              }}
+              className="px-3 py-1 bg-slate-200 dark:bg-slate-700 hover:bg-slate-300 text-slate-800 dark:text-slate-200 font-bold rounded-sm flex items-center space-x-1"
+            >
+              <FileText className="w-3.5 h-3.5" />
+              <span>Recent Bills ({recentSales.length})</span>
+            </button>
           </div>
         </div>
 
@@ -1035,6 +1070,97 @@ export const SalesBillingPage: React.FC<SalesBillingPageProps> = ({
           items={savedItemsForPrint}
           company={company}
         />
+      )}
+
+      {/* Recent Bills Modal / Drawer */}
+      {recentBillsOpen && (
+        <div className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-4">
+          <div className="bg-white dark:bg-slate-900 border-2 border-slate-700 w-full max-w-5xl shadow-2xl rounded-sm flex flex-col max-h-[85vh]">
+            <div className="p-3 bg-slate-100 dark:bg-slate-800 border-b border-slate-300 dark:border-slate-700 flex items-center justify-between">
+              <div>
+                <h2 className="text-base font-black text-slate-900 dark:text-white uppercase tracking-wide">
+                  Recent Sales Invoices
+                </h2>
+                <p className="text-xs text-slate-500">
+                  View, reprint, or cancel &amp; delete sales bills with automatic stock and ledger reversal
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setRecentBillsOpen(false)}
+                className="px-3 py-1 bg-slate-200 dark:bg-slate-700 hover:bg-slate-300 text-slate-800 dark:text-slate-200 text-xs font-bold rounded-sm"
+              >
+                Close [Esc]
+              </button>
+            </div>
+
+            <div className="p-3 overflow-y-auto flex-1">
+              {recentSales.length === 0 ? (
+                <div className="p-8 text-center text-slate-500 text-xs">
+                  No sales bills have been generated yet.
+                </div>
+              ) : (
+                <table className="w-full text-left border-collapse text-xs table-dense">
+                  <thead>
+                    <tr className="bg-slate-100 dark:bg-slate-800 font-extrabold uppercase text-slate-700 dark:text-slate-300">
+                      <th>#</th>
+                      <th>Invoice No</th>
+                      <th>Date</th>
+                      <th>Customer</th>
+                      <th>Type</th>
+                      <th className="text-right">Net Amount</th>
+                      <th className="text-center">Mode</th>
+                      <th className="text-center">Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-200 dark:divide-slate-800">
+                    {recentSales.map((s, idx) => (
+                      <tr key={s.id} className="hover:bg-slate-50 dark:hover:bg-slate-800/40">
+                        <td className="text-center font-mono text-slate-400">{idx + 1}</td>
+                        <td className="font-mono font-bold text-sky-700 dark:text-sky-300">{s.invoice_no}</td>
+                        <td className="font-mono">{s.sale_date}</td>
+                        <td className="font-bold">{s.customer_name || 'Counter Customer'}</td>
+                        <td>
+                          <span
+                            className={`px-1.5 py-0.5 text-[10px] font-bold rounded-sm ${
+                              s.bill_type === 'GST_INVOICE'
+                                ? 'bg-sky-100 dark:bg-sky-950 text-sky-800 dark:text-sky-300'
+                                : 'bg-emerald-100 dark:bg-emerald-950 text-emerald-800 dark:text-emerald-300'
+                            }`}
+                          >
+                            {s.bill_type === 'GST_INVOICE' ? 'GST Invoice' : 'Simple Bill'}
+                          </span>
+                        </td>
+                        <td className="text-right font-mono font-bold text-slate-900 dark:text-white">
+                          ₹{s.net_amount.toFixed(2)}
+                        </td>
+                        <td className="text-center font-bold text-[10px] uppercase">
+                          {s.payment_mode}
+                        </td>
+                        <td className="text-center space-x-1.5 whitespace-nowrap">
+                          <button
+                            type="button"
+                            onClick={() => handleReprintSaleBill(s)}
+                            className="px-2.5 py-1 bg-sky-600 hover:bg-sky-500 text-white font-bold text-[11px] rounded-sm shadow-sm"
+                          >
+                            Print
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => handleDeleteSaleBill(s)}
+                            className="px-2.5 py-1 bg-rose-600 hover:bg-rose-500 text-white font-bold text-[11px] rounded-sm shadow-sm"
+                          >
+                            Cancel / Delete
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );
