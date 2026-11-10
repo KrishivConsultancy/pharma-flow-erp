@@ -181,7 +181,7 @@ export const AiInvoiceScanModal: React.FC<AiInvoiceScanModalProps> = ({
                     type="password"
                     value={apiKeyInput}
                     onChange={(e) => setApiKeyInput(e.target.value)}
-                    placeholder="AQ.Ab8RN6K..."
+                    placeholder="Paste Gemini API Key from aistudio.google.com..."
                     className="w-full px-2 py-1 font-mono text-xs border border-slate-300 dark:border-slate-600 dark:bg-slate-900"
                   />
                   <button

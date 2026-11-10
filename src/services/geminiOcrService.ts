@@ -34,7 +34,7 @@ export interface ExtractedInvoice {
   notes?: string;
 }
 
-const DEFAULT_GEMINI_API_KEY = 'AQ.Ab8RN6KUF0ci2iNcvzDi1i8zp4SexEw2ttH2hm_PA6uUEE_fag';
+const DEFAULT_GEMINI_API_KEY = '';
 
 export class GeminiOcrService {
   private apiKey: string = '';

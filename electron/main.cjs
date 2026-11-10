@@ -261,7 +261,10 @@ ipcMain.handle('lookup-gstin', async (event, { gstin, cashfreeClientId, cashfree
 
 // IPC: Gemini Vision Multimodal Invoice Scanner with Multi-Model Waterfall Fallback
 ipcMain.handle('scan-invoice-gemini', async (event, { apiKey, base64Data, mimeType, promptText }) => {
-  const key = apiKey || process.env.VITE_GEMINI_API_KEY || 'AQ.Ab8RN6KUF0ci2iNcvzDi1i8zp4SexEw2ttH2hm_PA6uUEE_fag';
+  const key = apiKey || process.env.VITE_GEMINI_API_KEY || '';
+  if (!key) {
+    return { ok: false, error: 'Gemini API Key is not set. Please paste your Gemini API Key in the scanner window or Settings.' };
+  }
   const models = ['gemini-3.5-flash-lite', 'gemini-3.5-flash', 'gemini-3.8-flash', 'gemini-flash-latest'];
   let lastError = null;
 
