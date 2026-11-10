@@ -327,5 +327,20 @@ ipcMain.handle('updater:check', async () => {
 });
 
 ipcMain.handle('updater:install', () => {
-  autoUpdater.quitAndInstall(false, true);
+  try {
+    // Cleanly close and destroy all renderer windows first so file locks on Windows are instantly released
+    BrowserWindow.getAllWindows().forEach((w) => {
+      try {
+        w.removeAllListeners('close');
+        w.destroy();
+      } catch (e) {}
+    });
+  } catch (err) {
+    console.warn('Error closing windows prior to update:', err.message);
+  }
+
+  // Allow OS 500ms to release file handles, then run silent update and relaunch
+  setTimeout(() => {
+    autoUpdater.quitAndInstall(true, true);
+  }, 500);
 });
