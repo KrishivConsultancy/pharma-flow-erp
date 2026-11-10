@@ -1,0 +1,47 @@
+# Dependencies
+node_modules/
+.pnp
+.pnp.js
+
+# Build Outputs & Packaged Binaries
+dist/
+release/
+build/
+out/
+*.exe
+*.dmg
+*.deb
+*.rpm
+*.zip
+*.tar.gz
+
+# Environment & Secrets (NEVER COMMIT CREDENTIALS)
+.env
+.env.local
+.env.*.local
+
+# Logs
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+*.log
+
+# Editor & OS Artifacts
+.DS_Store
+.AppleDouble
+.LSOverride
+Thumbs.db
+ehthumbs.db
+.idea/
+.vscode/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+
+# Temporary SQLite Files
+*.sqlite-wal
+*.sqlite-shm

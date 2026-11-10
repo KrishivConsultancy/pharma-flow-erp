@@ -1,0 +1,76 @@
+@import "tailwindcss";
+
+@layer base {
+  :root {
+    --border-color: #cbd5e1;
+    --table-header-bg: #f1f5f9;
+  }
+  .dark {
+    --border-color: #334155;
+    --table-header-bg: #1e293b;
+  }
+}
+
+/* Dense enterprise data grids */
+.table-dense th {
+  padding: 6px 8px;
+  font-size: 13px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  border-bottom: 2px solid #94a3b8;
+  background-color: var(--table-header-bg);
+  white-space: nowrap;
+}
+
+.table-dense td {
+  padding: 6px 8px;
+  font-size: 14px;
+  border-bottom: 1px solid var(--border-color);
+}
+
+/* Custom crisp scrollbar */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+::-webkit-scrollbar-track {
+  background: #f1f5f9;
+}
+.dark ::-webkit-scrollbar-track {
+  background: #0f172a;
+}
+::-webkit-scrollbar-thumb {
+  background: #94a3b8;
+  border-radius: 2px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #64748b;
+}
+
+/* High contrast inputs */
+input, select, textarea {
+  border-radius: 2px;
+}
+input:focus, select:focus, textarea:focus {
+  outline: none;
+  border-color: #0284c7 !important;
+  box-shadow: 0 0 0 1px #0284c7;
+}
+
+/* Print CSS */
+@media print {
+  body {
+    background: #fff !important;
+    color: #000 !important;
+  }
+  .no-print {
+    display: none !important;
+  }
+  .print-only {
+    display: block !important;
+  }
+  @page {
+    margin: 6mm;
+  }
+}

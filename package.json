@@ -1,0 +1,89 @@
+{
+  "name": "pharma-flow-erp",
+  "version": "1.0.0",
+  "description": "Enterprise-Grade Offline-First Pharmaceutical Distribution ERP & Wholesale Billing Engine",
+  "main": "electron/main.cjs",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc && vite build",
+    "preview": "vite preview",
+    "electron": "electron .",
+    "electron:dev": "concurrently -k \"vite\" \"electron .\"",
+    "dist:win": "npm run build && electron-builder --win --x64"
+  },
+  "build": {
+    "appId": "com.codesport.radhadrugs",
+    "productName": "Radha Drugs ERP",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "dist/**/*",
+      "electron/**/*",
+      "package.json"
+    ],
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "artifactName": "Radha-Drugs-ERP-Setup.${ext}"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "Radha Drugs ERP"
+    },
+    "publish": {
+      "provider": "github",
+      "owner": "KrishivConsultancy",
+      "repo": "pharma-flow-erp"
+    }
+  },
+  "keywords": [
+    "pharmaceutical",
+    "erp",
+    "wholesale-billing",
+    "fefo-inventory",
+    "gst-invoicing",
+    "cashfree-gstin",
+    "offline-first",
+    "sqlite-wasm",
+    "electron",
+    "react-19",
+    "supabase-sync"
+  ],
+  "author": "Krishiv Consultancy <sheena.sharma@krishivconsultancy.com>",
+  "license": "ISC",
+  "dependencies": {
+    "@supabase/supabase-js": "^2.49.1",
+    "electron-updater": "^6.3.9",
+    "lucide-react": "^0.475.0",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "sql.js": "^1.12.0"
+  },
+  "devDependencies": {
+    "@tailwindcss/postcss": "^4.3.5",
+    "@tailwindcss/vite": "^4.3.5",
+    "@types/react": "^19.0.10",
+    "@types/react-dom": "^19.0.4",
+    "@types/sql.js": "^1.4.9",
+    "@vitejs/plugin-react": "^4.3.4",
+    "autoprefixer": "^10.4.20",
+    "concurrently": "^9.1.2",
+    "electron": "^34.2.0",
+    "electron-builder": "^25.1.8",
+    "postcss": "^8.5.2",
+    "tailwindcss": "^4.3.5",
+    "typescript": "~5.7.2",
+    "vite": "^6.1.0"
+  }
+}
