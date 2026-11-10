@@ -1,4 +1,4 @@
-// AI Supplier Bill Scanner Modal: Gemini 2.5 Flash Vision OCR
+// AI Supplier Bill Scanner Modal: Gemini Flash Vision OCR (gemini-3.5-flash-lite / gemini-3.8-flash)
 // Multimodal invoice extraction (Marg ERP, Busy, Tally) -> Editable Verification Grid
 // ZERO DUMMY DATA POLICY: Zero fake items. Direct real extraction.
 
@@ -66,7 +66,7 @@ export const AiInvoiceScanModal: React.FC<AiInvoiceScanModalProps> = ({
   const processAiImage = async (base64: string, mimeType: string) => {
     setIsProcessing(true);
     setErrorMessage('');
-    setStatusMessage('Uploading to Gemini 2.5 Flash Vision & extracting invoice rows...');
+    setStatusMessage('Uploading to Gemini Flash Vision & extracting invoice rows...');
     try {
       const data = await geminiOcrService.extractInvoiceFromImage(base64, mimeType);
       setExtractedData(data);
@@ -157,7 +157,7 @@ export const AiInvoiceScanModal: React.FC<AiInvoiceScanModalProps> = ({
               AI Supplier Bill Scanner (Marg ERP / Busy Invoice Reader)
             </span>
             <span className="text-xs bg-amber-500/20 text-amber-300 px-2 py-0.5 rounded border border-amber-500/30 font-bold">
-              Gemini 2.5 Flash Vision
+              Gemini Vision (3.5 / 3.8 Flash)
             </span>
           </div>
 

@@ -1,4 +1,4 @@
-// Gemini 2.5 Flash Vision API Service for Supplier Invoice OCR
+// Gemini Vision API Service for Supplier Invoice OCR (gemini-3.5-flash-lite / gemini-3.8-flash)
 // Real-world multimodal extraction for Indian Wholesale Pharmaceutical Bills (Marg ERP, Busy, Tally)
 // ZERO DUMMY DATA POLICY: Never returns hardcoded sample data.
 
@@ -151,44 +151,58 @@ CRITICAL PHARMA EXTRACTION RULES:
     }
 
     // 2. Direct fetch fallback (Web or Electron renderer with webSecurity: false)
-    const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${key}`;
+    const models = ['gemini-3.5-flash-lite', 'gemini-3.5-flash', 'gemini-3.8-flash', 'gemini-flash-latest'];
+    let lastError: Error | null = null;
 
-    const requestBody = {
-      contents: [
-        {
-          parts: [
-            { text: promptText },
+    for (const model of models) {
+      try {
+        const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${key}`;
+
+        const requestBody = {
+          contents: [
             {
-              inlineData: {
-                mimeType,
-                data: cleanBase64,
-              },
+              parts: [
+                { text: promptText },
+                {
+                  inlineData: {
+                    mimeType,
+                    data: cleanBase64,
+                  },
+                },
+              ],
             },
           ],
-        },
-      ],
-      generationConfig: {
-        responseMimeType: 'application/json',
-      },
-    };
+          generationConfig: {
+            responseMimeType: 'application/json',
+          },
+        };
 
-    const response = await fetch(url, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(requestBody),
-    });
+        const response = await fetch(url, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(requestBody),
+        });
 
-    if (!response.ok) {
-      const errText = await response.text();
-      throw new Error(`Gemini Vision API Error (HTTP ${response.status}): ${errText}`);
+        if (!response.ok) {
+          const errText = await response.text();
+          lastError = new Error(`Gemini Vision API Error (${model} HTTP ${response.status}): ${errText}`);
+          continue;
+        }
+
+        const resJson = await response.json();
+        return this.parseGeminiResponse(resJson);
+      } catch (err: any) {
+        lastError = err instanceof Error ? err : new Error(String(err));
+      }
     }
 
-    const resJson = await response.json();
-    return this.parseGeminiResponse(resJson);
+    throw lastError || new Error('All Gemini Vision models failed to respond.');
   }
 
   private parseGeminiResponse(resJson: any): ExtractedInvoice {
-    const candidate = resJson.candidates?.[0]?.content?.parts?.[0]?.text;
+    const parts = resJson.candidates?.[0]?.content?.parts || [];
+    const textPart = parts.find((p: any) => p && typeof p.text === 'string' && !p.thought) || parts[0];
+    const candidate = textPart?.text;
     if (!candidate) {
       throw new Error('Gemini Vision did not detect readable text in the uploaded document. Please ensure the invoice is well-lit and legible.');
     }
@@ -253,7 +267,7 @@ CRITICAL PHARMA EXTRACTION RULES:
       total_gst: Math.round(calculatedGst * 100) / 100,
       grand_total: Math.round((calculatedSubTotal + calculatedGst) * 100) / 100,
       confidence: 0.95,
-      notes: `Extracted ${sanitizedItems.length} line items with Gemini 2.5 Flash Vision.`,
+      notes: `Extracted ${sanitizedItems.length} line items with Gemini Flash Vision.`,
     };
   }
 }

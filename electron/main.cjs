@@ -259,46 +259,62 @@ ipcMain.handle('lookup-gstin', async (event, { gstin, cashfreeClientId, cashfree
   return { ok: false, error: 'Could not resolve online' };
 });
 
-// IPC: Gemini 2.5 Flash Vision Multimodal Invoice Scanner
+// IPC: Gemini Vision Multimodal Invoice Scanner with Multi-Model Waterfall Fallback
 ipcMain.handle('scan-invoice-gemini', async (event, { apiKey, base64Data, mimeType, promptText }) => {
-  try {
-    const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`;
+  const key = apiKey || process.env.VITE_GEMINI_API_KEY || 'AQ.Ab8RN6KUF0ci2iNcvzDi1i8zp4SexEw2ttH2hm_PA6uUEE_fag';
+  const models = ['gemini-3.5-flash-lite', 'gemini-3.5-flash', 'gemini-3.8-flash', 'gemini-flash-latest'];
+  let lastError = null;
 
-    const requestBody = {
-      contents: [
-        {
-          parts: [
-            { text: promptText },
-            {
-              inlineData: {
-                mimeType: mimeType || 'image/jpeg',
-                data: base64Data,
+  for (const model of models) {
+    try {
+      const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${key}`;
+
+      const requestBody = {
+        contents: [
+          {
+            parts: [
+              { text: promptText },
+              {
+                inlineData: {
+                  mimeType: mimeType || 'image/jpeg',
+                  data: base64Data,
+                },
               },
-            },
-          ],
+            ],
+          },
+        ],
+        generationConfig: {
+          responseMimeType: 'application/json',
         },
-      ],
-      generationConfig: {
-        responseMimeType: 'application/json',
-      },
-    };
+      };
 
-    const response = await fetch(url, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(requestBody),
-    });
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 25000); // 25s timeout per model
 
-    if (!response.ok) {
-      const errText = await response.text();
-      return { ok: false, error: `Gemini API (HTTP ${response.status}): ${errText}` };
+      const response = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(requestBody),
+        signal: controller.signal,
+      });
+      clearTimeout(timeoutId);
+
+      if (!response.ok) {
+        const errText = await response.text();
+        console.warn(`Gemini model ${model} HTTP ${response.status}: ${errText}`);
+        lastError = `Gemini API (${model} HTTP ${response.status}): ${errText}`;
+        continue;
+      }
+
+      const resJson = await response.json();
+      return { ok: true, data: resJson, modelUsed: model };
+    } catch (err) {
+      console.warn(`Gemini model ${model} error:`, err.message);
+      lastError = `Gemini model ${model} error: ${err.message}`;
     }
-
-    const resJson = await response.json();
-    return { ok: true, data: resJson };
-  } catch (err) {
-    return { ok: false, error: err.message };
   }
+
+  return { ok: false, error: lastError || 'All Gemini Vision models failed to respond' };
 });
 
 // IPC: Auto-Updater commands

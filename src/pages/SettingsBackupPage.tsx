@@ -480,7 +480,7 @@ export const SettingsBackupPage: React.FC<SettingsBackupPageProps> = ({
 
             <div>
               <label className="block font-bold text-slate-700 dark:text-slate-300 uppercase mb-1">
-                Gemini 2.5 Flash Vision API Key (For Bill Scanner)
+                Gemini Flash Vision API Key (For Bill Scanner)
               </label>
               <input
                 type="password"

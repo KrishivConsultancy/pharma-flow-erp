@@ -35,7 +35,7 @@ export const PartyFormModal: React.FC<PartyFormModalProps> = ({
   const [stateName, setStateName] = useState<string>('BIHAR');
   const [stateCode, setStateCode] = useState<string>('10');
   const [openingBalance, setOpeningBalance] = useState<number>(0);
-  const [creditLimit, setCreditLimit] = useState<number>(100000);
+  const [creditLimit, setCreditLimit] = useState<number>(defaultPartyType === 'VENDOR' ? 0 : 100000);
 
   const [isLoadingGstin, setIsLoadingGstin] = useState<boolean>(false);
   const [gstinFeedback, setGstinFeedback] = useState<{ type: 'success' | 'error' | 'info'; message: string } | null>(null);
@@ -57,7 +57,7 @@ export const PartyFormModal: React.FC<PartyFormModalProps> = ({
       setStateName(initialParty.state_name || 'BIHAR');
       setStateCode(initialParty.state_code || '10');
       setOpeningBalance(initialParty.opening_balance || 0);
-      setCreditLimit(initialParty.credit_limit || 100000);
+      setCreditLimit(initialParty.credit_limit !== undefined ? initialParty.credit_limit : (initialParty.party_type === 'VENDOR' ? 0 : 100000));
       setGstinFeedback(null);
     } else {
       setPartyType(defaultPartyType);
@@ -73,7 +73,7 @@ export const PartyFormModal: React.FC<PartyFormModalProps> = ({
       setStateName('BIHAR');
       setStateCode('10');
       setOpeningBalance(0);
-      setCreditLimit(100000);
+      setCreditLimit(defaultPartyType === 'VENDOR' ? 0 : 100000);
       setGstinFeedback(null);
     }
   }, [isOpen, initialParty, defaultPartyType]);
@@ -185,7 +185,7 @@ export const PartyFormModal: React.FC<PartyFormModalProps> = ({
       state_name: stateName.toUpperCase().trim(),
       state_code: stateCode.trim(),
       opening_balance: Number(openingBalance) || 0,
-      credit_limit: Number(creditLimit) || 100000,
+      credit_limit: isNaN(Number(creditLimit)) ? 0 : Number(creditLimit),
       gst_status: isGstRegistered ? 'ACTIVE' : 'UNREGISTERED',
     };
 
@@ -233,7 +233,10 @@ export const PartyFormModal: React.FC<PartyFormModalProps> = ({
               <div className="flex space-x-2">
                 <button
                   type="button"
-                  onClick={() => setPartyType('CUSTOMER')}
+                  onClick={() => {
+                    setPartyType('CUSTOMER');
+                    if (creditLimit === 0) setCreditLimit(100000);
+                  }}
                   className={`flex-1 py-1.5 font-bold uppercase rounded-sm border transition-colors ${
                     partyType === 'CUSTOMER'
                       ? 'bg-sky-600 text-white border-sky-700 shadow-sm'
@@ -244,7 +247,10 @@ export const PartyFormModal: React.FC<PartyFormModalProps> = ({
                 </button>
                 <button
                   type="button"
-                  onClick={() => setPartyType('VENDOR')}
+                  onClick={() => {
+                    setPartyType('VENDOR');
+                    setCreditLimit(0);
+                  }}
                   className={`flex-1 py-1.5 font-bold uppercase rounded-sm border transition-colors ${
                     partyType === 'VENDOR'
                       ? 'bg-indigo-600 text-white border-indigo-700 shadow-sm'
@@ -481,11 +487,17 @@ export const PartyFormModal: React.FC<PartyFormModalProps> = ({
               <input
                 type="number"
                 step="1000"
+                min="0"
                 value={creditLimit}
-                onChange={(e) => setCreditLimit(parseFloat(e.target.value) || 100000)}
+                onChange={(e) => {
+                  const val = e.target.value;
+                  setCreditLimit(val === '' ? 0 : (isNaN(parseFloat(val)) ? 0 : parseFloat(val)));
+                }}
                 className="w-full px-3 py-1.5 font-mono font-bold border border-slate-300 dark:border-slate-600 dark:bg-slate-800"
               />
-              <span className="text-[10px] text-slate-500">Maximum credit outstanding threshold</span>
+              <span className="text-[10px] text-slate-500">
+                {partyType === 'VENDOR' ? 'Credit limit given by vendor (usually ₹0)' : 'Maximum credit outstanding threshold for customer'}
+              </span>
             </div>
           </div>
 
