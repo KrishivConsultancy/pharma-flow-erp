@@ -22,6 +22,7 @@ import {
 import { dbService } from '../db/databaseService';
 import { InventoryBatch, CompanyProfile } from '../db/schema';
 import { CsvExportService } from '../services/csvExportService';
+import { toast } from '../services/toastService';
 
 type TabType = 'ALL' | 'SHORTAGE' | 'EXPIRING' | 'EXPIRED';
 
@@ -111,7 +112,7 @@ export const InventoryBatchesPage: React.FC<InventoryBatchesPageProps> = ({
   const handleSaveBatchForm = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!formMedName.trim() || !formBatchNo.trim()) {
-      alert('Please enter Medicine Name and Batch Number.');
+      toast.error('Please enter Medicine Name and Batch Number.', { title: 'Missing Batch Details' });
       return;
     }
 
@@ -132,24 +133,29 @@ export const InventoryBatchesPage: React.FC<InventoryBatchesPageProps> = ({
         rack_location: formRack.trim().toUpperCase(),
       });
 
-      alert(`✅ Opening stock batch ${formBatchNo.toUpperCase()} saved successfully!`);
+      toast.success(`Opening stock batch ${formBatchNo.toUpperCase()} saved successfully!`);
       setBatchModalOpen(false);
       await loadBatches();
     } catch (err: any) {
-      alert(`Failed to save stock batch: ${err.message}`);
+      toast.error(`Failed to save stock batch: ${err.message}`);
     }
   };
 
   const handleDeleteBatch = async (b: any) => {
-    if (!window.confirm(`Are you sure you want to delete batch ${b.batch_no} of ${b.medicine_name || 'this medicine'}?`)) {
-      return;
-    }
+    const confirmed = await toast.confirm({
+      title: `Delete Batch ${b.batch_no}?`,
+      message: `Are you sure you want to delete batch ${b.batch_no} of ${b.medicine_name || 'this medicine'}?\n\nThis will remove ${b.available_qty || 0} units from active inventory.`,
+      confirmText: 'Delete Batch',
+      isDestructive: true,
+    });
+    if (!confirmed) return;
+
     try {
       await dbService.deleteBatch(b.id);
-      alert('✅ Batch deleted successfully.');
+      toast.success('Batch deleted successfully.');
       await loadBatches();
     } catch (err: any) {
-      alert(`Failed to delete batch: ${err.message}`);
+      toast.error(`Failed to delete batch: ${err.message}`);
     }
   };
   const todayIso = new Date().toISOString().substring(0, 10);

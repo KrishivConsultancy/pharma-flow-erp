@@ -13,6 +13,7 @@ import {
   Download,
 } from 'lucide-react';
 import { dbService } from '../db/databaseService';
+import { toast } from '../services/toastService';
 import {
   ReturnAdjustment,
   AdjustmentType,
@@ -107,11 +108,11 @@ export const ReturnsAdjustmentsPage: React.FC<ReturnsAdjustmentsPageProps> = ({
   const handleSubmitAdjustment = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!selectedBatchId) {
-      alert('Please select an inventory batch to adjust.');
+      toast.error('Please select an inventory batch to adjust.', { title: 'Batch Selection Required' });
       return;
     }
     if (qty <= 0) {
-      alert('Adjustment quantity must be greater than zero.');
+      toast.error('Adjustment quantity must be greater than zero.', { title: 'Invalid Quantity' });
       return;
     }
 
@@ -147,10 +148,10 @@ export const ReturnsAdjustmentsPage: React.FC<ReturnsAdjustmentsPageProps> = ({
 
     try {
       await dbService.saveAdjustmentTransaction(adj);
-      alert(`✅ Adjustment voucher ${voucherNo} created successfully! Stock and Khata updated.`);
+      toast.success(`Adjustment voucher ${voucherNo} created successfully! Stock and Khata updated.`);
       setReason('');
     } catch (err: any) {
-      alert('Failed to save adjustment: ' + err.message);
+      toast.error('Failed to save adjustment: ' + err.message);
     }
   };
 

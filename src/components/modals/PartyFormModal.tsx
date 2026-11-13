@@ -6,6 +6,7 @@ import { X, Zap, CheckCircle2, AlertCircle, Building2, User, Phone, MapPin, File
 import { Party, PartyType } from '../../db/schema';
 import { cashfreeService, GST_STATE_MAP } from '../../services/cashfreeService';
 import { dbService } from '../../db/databaseService';
+import { toast } from '../../services/toastService';
 
 interface PartyFormModalProps {
   isOpen: boolean;
@@ -164,7 +165,7 @@ export const PartyFormModal: React.FC<PartyFormModalProps> = ({
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!name.trim()) {
-      alert('Please enter party name / shop name.');
+      toast.error('Please enter party name / shop name.', { title: 'Party Name Required' });
       nameInputRef.current?.focus();
       return;
     }
@@ -191,20 +192,26 @@ export const PartyFormModal: React.FC<PartyFormModalProps> = ({
 
     try {
       await dbService.upsertParty(partyData);
+      toast.success(`${partyData.name} saved successfully!`);
       if (onSaved) {
         onSaved(partyData as Party);
       }
       onClose();
     } catch (err: any) {
-      alert('Failed to save party: ' + err.message);
+      toast.error('Failed to save party: ' + err.message);
     }
   };
 
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-4">
-      <div className="bg-white dark:bg-slate-900 border-2 border-slate-700 w-full max-w-2xl shadow-2xl rounded-sm flex flex-col max-h-[90vh]">
+    <div
+      role="dialog"
+      aria-modal="true"
+      className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4"
+      style={{ animation: 'backdropFadeIn 150ms ease-out forwards' }}
+    >
+      <div className="bg-white dark:bg-slate-900 border-2 border-slate-700 w-full max-w-2xl shadow-2xl rounded-sm flex flex-col max-h-[90vh] modal-surface">
         {/* Modal Header */}
         <div className="bg-slate-100 dark:bg-slate-800 border-b border-slate-300 dark:border-slate-700 px-4 py-3 flex items-center justify-between">
           <div className="flex items-center space-x-2">

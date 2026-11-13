@@ -147,8 +147,13 @@ export const AiInvoiceScanModal: React.FC<AiInvoiceScanModalProps> = ({
   };
 
   return (
-    <div className="fixed inset-0 z-50 bg-black/75 flex items-center justify-center p-4">
-      <div className="bg-white dark:bg-slate-900 border-2 border-slate-700 w-full max-w-5xl shadow-2xl rounded-sm flex flex-col max-h-[90vh]">
+    <div
+      role="dialog"
+      aria-modal="true"
+      className="fixed inset-0 z-50 bg-black/75 backdrop-blur-xs flex items-center justify-center p-4"
+      style={{ animation: 'backdropFadeIn 150ms ease-out forwards' }}
+    >
+      <div className="bg-white dark:bg-slate-900 border-2 border-slate-700 w-full max-w-5xl shadow-2xl rounded-sm flex flex-col max-h-[90vh] modal-surface">
         {/* Header */}
         <div className="bg-slate-900 text-white px-4 py-3 flex items-center justify-between border-b border-slate-700">
           <div className="flex items-center space-x-2">

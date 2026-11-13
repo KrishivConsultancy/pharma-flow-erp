@@ -6,6 +6,7 @@ import { Printer, Download, Share2, X, FileText, Minimize2, Maximize2 } from 'lu
 import { CompanyProfile, Sale, SaleItem } from '../../db/schema';
 import { GstTaxInvoiceTemplate } from './GstTaxInvoiceTemplate';
 import { SimpleBillTemplate } from './SimpleBillTemplate';
+import { toast } from '../../services/toastService';
 
 interface InvoicePrintModalProps {
   isOpen: boolean;
@@ -57,12 +58,12 @@ export const InvoicePrintModal: React.FC<InvoicePrintModalProps> = ({
           isHalfPage: layout === 'half',
         });
         if (res.success) {
-          alert(`✅ Invoice PDF saved to:\n${res.filePath}`);
+          toast.success(`Invoice PDF saved to:\n${res.filePath}`, { title: 'PDF Exported' });
         } else if (!res.cancelled) {
-          alert(`Failed to save PDF: ${res.error}`);
+          toast.error(`Failed to save PDF: ${res.error}`);
         }
       } catch (err: any) {
-        alert(`PDF export error: ${err.message}`);
+        toast.error(`PDF export error: ${err.message}`);
       }
     } else {
       window.print();

@@ -19,6 +19,7 @@ import {
   Users,
   RotateCcw,
   BarChart3,
+  AlignJustify,
 } from 'lucide-react';
 import { CompanyProfile } from '../../db/schema';
 import { supabaseSync, SyncStatus } from '../../db/supabaseSync';
@@ -48,6 +49,29 @@ export const TopHeader: React.FC<TopHeaderProps> = ({
   const [currentTime, setCurrentTime] = useState<string>(
     new Date().toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', second: '2-digit' })
   );
+
+  // Table Information Density: 'compact' (Marg speed) | 'standard' | 'comfortable'
+  const [tableDensity, setTableDensity] = useState<'compact' | 'standard' | 'comfortable'>(() => {
+    return (localStorage.getItem('rd_table_density') as any) || 'compact';
+  });
+
+  useEffect(() => {
+    document.body.classList.remove('density-compact', 'density-comfortable');
+    if (tableDensity === 'compact') {
+      document.body.classList.add('density-compact');
+    } else if (tableDensity === 'comfortable') {
+      document.body.classList.add('density-comfortable');
+    }
+    localStorage.setItem('rd_table_density', tableDensity);
+  }, [tableDensity]);
+
+  const cycleDensity = () => {
+    setTableDensity((prev) => {
+      if (prev === 'compact') return 'standard';
+      if (prev === 'standard') return 'comfortable';
+      return 'compact';
+    });
+  };
 
   useEffect(() => {
     const unsub = supabaseSync.subscribe((status) => {
@@ -188,6 +212,18 @@ export const TopHeader: React.FC<TopHeaderProps> = ({
           <Clock className="w-3.5 h-3.5 text-sky-400" />
           <span>{currentTime}</span>
         </div>
+
+        {/* Table Information Density Switcher */}
+        <button
+          onClick={cycleDensity}
+          className="px-2 py-1 bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white rounded-sm border border-slate-700 transition-colors flex items-center space-x-1 text-xs"
+          title={`Table Information Density: ${tableDensity.toUpperCase()} (Click to toggle)`}
+        >
+          <AlignJustify className="w-3.5 h-3.5 text-sky-400" />
+          <span className="font-mono text-[10px] uppercase font-bold text-slate-300 hidden sm:inline">
+            {tableDensity === 'compact' ? 'Compact' : tableDensity === 'standard' ? 'Normal' : 'Spacious'}
+          </span>
+        </button>
 
         {/* Dark/Light Mode Toggle */}
         <button

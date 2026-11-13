@@ -36,6 +36,7 @@ import {
 import { BatchPickerModal } from '../components/modals/BatchPickerModal';
 import { PartyFormModal } from '../components/modals/PartyFormModal';
 import { InvoicePrintModal } from '../components/print/InvoicePrintModal';
+import { toast } from '../services/toastService';
 
 interface BillLineItem {
   id: string;
@@ -109,6 +110,12 @@ export const SalesBillingPage: React.FC<SalesBillingPageProps> = ({
   // Search input dropdown states
   const [activeSearchIndex, setActiveSearchIndex] = useState<number | null>(null);
   const [searchTerm, setSearchTerm] = useState<string>('');
+  const [highlightedMedIndex, setHighlightedMedIndex] = useState<number>(0);
+  const [customerError, setCustomerError] = useState<boolean>(false);
+
+  const qtyInputRefs = useRef<{ [key: number]: HTMLInputElement | null }>({});
+  const customerSelectRef = useRef<HTMLSelectElement | null>(null);
+  const lastDeletedRowRef = useRef<{ item: BillLineItem; index: number } | null>(null);
 
   // Quotation Integration States
   const [convertedQuotationId, setConvertedQuotationId] = useState<string | null>(null);
@@ -185,16 +192,22 @@ export const SalesBillingPage: React.FC<SalesBillingPageProps> = ({
   };
 
   const handleDeleteSaleBill = async (sale: Sale) => {
-    const confirmMsg = `⚠️ CANCEL & DELETE SALE BILL ${sale.invoice_no}?\n\nThis will:\n1. Restore all deducted batch quantities back into stock.\n2. Reverse the customer ledger balance by ₹${sale.net_amount.toFixed(2)}.\n\nAre you sure you want to proceed?`;
-    if (!window.confirm(confirmMsg)) return;
+    const confirmed = await toast.confirm({
+      title: `Cancel & Delete Bill #${sale.invoice_no}?`,
+      message: `This will:\n1. Restore all deducted batch quantities back into stock.\n2. Reverse the customer ledger balance by ₹${sale.net_amount.toFixed(2)}.`,
+      confirmText: 'Yes, Delete Bill',
+      cancelText: 'Cancel & Keep',
+      isDestructive: true,
+    });
+    if (!confirmed) return;
 
     try {
       await dbService.deleteSaleTransaction(sale.id);
-      alert(`✅ Sale Bill ${sale.invoice_no} has been cancelled and deleted. Stock and ledger reversed.`);
+      toast.success(`Sale Bill ${sale.invoice_no} has been cancelled and deleted. Stock and ledger reversed.`);
       await loadRecentSales();
       await loadMasterData();
     } catch (err: any) {
-      alert(`Failed to delete sale bill: ${err.message}`);
+      toast.error(`Failed to delete sale bill: ${err.message}`);
     }
   };
 
@@ -208,7 +221,7 @@ export const SalesBillingPage: React.FC<SalesBillingPageProps> = ({
       setSavedItemsForPrint(saleItems);
       setPrintModalOpen(true);
     } catch (err: any) {
-      alert(`Failed to load bill items for re-print: ${err.message}`);
+      toast.error(`Failed to load bill items for re-print: ${err.message}`);
     }
   };
 
@@ -266,6 +279,11 @@ export const SalesBillingPage: React.FC<SalesBillingPageProps> = ({
       } else if (e.altKey && e.key.toLowerCase() === 'q') {
         e.preventDefault();
         handleOpenLoadQuotationModal();
+      } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z' && !e.shiftKey) {
+        if (lastDeletedRowRef.current) {
+          e.preventDefault();
+          handleUndoDelete();
+        }
       }
     };
 
@@ -477,20 +495,23 @@ export const SalesBillingPage: React.FC<SalesBillingPageProps> = ({
       setPendingQuotations(pending);
       setQuotationPickerOpen(true);
     } catch (err: any) {
-      alert(`Failed to fetch pending quotations: ${err.message}`);
+      toast.error(`Failed to fetch pending quotations: ${err.message}`);
     }
   };
 
   // Save current cart as Quotation (Zero Stock Deduction)
   const handleSaveAsQuotation = async () => {
     if (!selectedCustomer) {
-      alert('Please select a customer first.');
+      setCustomerError(true);
+      toast.error('Please select a customer first.', { title: 'Customer Required' });
+      customerSelectRef.current?.focus();
       return;
     }
+    setCustomerError(false);
 
     const validItems = items.filter((it) => it.product_name && it.qty > 0);
     if (validItems.length === 0) {
-      alert('Please add at least one medicine with quantity greater than zero.');
+      toast.error('Please add at least one medicine with quantity greater than zero.', { title: 'Empty Quotation' });
       return;
     }
 
@@ -558,14 +579,12 @@ export const SalesBillingPage: React.FC<SalesBillingPageProps> = ({
       }));
 
       await dbService.saveQuotation(quotation, quoteItems);
-      alert(
-        `✅ Successfully saved as Quotation #${nextQuoteNo}!\n\n` +
-        `Customer: ${selectedCustomer.name}\n` +
-        `Estimated Total: ₹${netAmount.toFixed(2)}\n\n` +
-        `NOTE: Physical inventory stock has NOT been deducted.`
+      toast.success(
+        `Quotation #${nextQuoteNo} saved for ${selectedCustomer.name}! (Est: ₹${netAmount.toFixed(2)})\nInventory stock is preserved.`,
+        { title: 'Quotation Created' }
       );
     } catch (err: any) {
-      alert(`Failed to save quotation: ${err.message}`);
+      toast.error(`Failed to save quotation: ${err.message}`);
     }
   };
 
@@ -635,6 +654,15 @@ export const SalesBillingPage: React.FC<SalesBillingPageProps> = ({
     newItems[rowIndex] = updatedRow;
     setItems(newItems);
     setBatchPickerOpen(false);
+
+    // Item 3: Auto-focus and highlight Qty input for immediate numeric typing
+    setTimeout(() => {
+      const qtyEl = qtyInputRefs.current[rowIndex];
+      if (qtyEl) {
+        qtyEl.focus();
+        qtyEl.select();
+      }
+    }, 60);
   };
 
   // Update line item property
@@ -646,10 +674,34 @@ export const SalesBillingPage: React.FC<SalesBillingPageProps> = ({
   };
 
   const handleRemoveItem = (index: number) => {
+    const deleted = items[index];
+    lastDeletedRowRef.current = { item: deleted, index };
+
     if (items.length <= 1) {
       handleAddNewRow();
     } else {
       setItems(items.filter((_, i) => i !== index));
+    }
+
+    // Item 8: Reversible soft-delete with Undo snackbar
+    toast.info(`Deleted ${deleted.product_name || 'line item'}`, {
+      action: {
+        label: 'Undo (Ctrl+Z)',
+        onClick: handleUndoDelete,
+      },
+    });
+  };
+
+  const handleUndoDelete = () => {
+    if (lastDeletedRowRef.current) {
+      const { item, index } = lastDeletedRowRef.current;
+      setItems((prev) => {
+        const next = [...prev];
+        next.splice(Math.min(index, next.length), 0, item);
+        return next;
+      });
+      lastDeletedRowRef.current = null;
+      toast.success(`Restored ${item.product_name || 'line item'}`);
     }
   };
 
@@ -677,13 +729,16 @@ export const SalesBillingPage: React.FC<SalesBillingPageProps> = ({
   // ATOMIC COMMIT: Save & Print Bill [F10]
   const handleSaveAndPrintBill = async () => {
     if (!selectedCustomer) {
-      alert('Please select a customer for this wholesale bill.');
+      setCustomerError(true);
+      toast.error('Please select a customer for this wholesale bill.', { title: 'Customer Required' });
+      customerSelectRef.current?.focus();
       return;
     }
+    setCustomerError(false);
 
     const validItems = items.filter((it) => it.product_name && it.qty > 0 && it.batch_no);
     if (validItems.length === 0) {
-      alert('Please add at least one valid medicine with batch number and quantity.');
+      toast.error('Please add at least one valid medicine with batch number and quantity.', { title: 'Empty Bill' });
       return;
     }
 
@@ -691,9 +746,13 @@ export const SalesBillingPage: React.FC<SalesBillingPageProps> = ({
     for (const it of validItems) {
       const totalUnits = it.qty + it.free_qty;
       if (totalUnits > it.available_qty) {
-        const proceed = confirm(
-          `Stock Warning: Batch ${it.batch_no} of ${it.product_name} only has ${it.available_qty} units available. You are billing ${totalUnits} units. Proceed with negative stock override?`
-        );
+        const proceed = await toast.confirm({
+          title: 'Insufficient Batch Stock Warning',
+          message: `Batch ${it.batch_no} of ${it.product_name} only has ${it.available_qty} units available.\nYou are billing ${totalUnits} units.\n\nProceed with negative stock override?`,
+          confirmText: 'Override & Proceed',
+          cancelText: 'Cancel & Adjust',
+          isDestructive: true,
+        });
         if (!proceed) return;
       }
     }
@@ -776,6 +835,10 @@ export const SalesBillingPage: React.FC<SalesBillingPageProps> = ({
       setSavedItemsForPrint(saleItemRows);
       setPrintModalOpen(true);
 
+      toast.success(`Bill #${invoiceNo} saved successfully! Total: ₹${netAmount.toFixed(2)}`, {
+        title: 'Wholesale Invoice Saved',
+      });
+
       // Reset bill for next transaction
       handleAddNewRow();
       setBillDiscountAmount(0);
@@ -783,7 +846,7 @@ export const SalesBillingPage: React.FC<SalesBillingPageProps> = ({
       setAmountReceived(0);
       setPaymentMode('CREDIT');
     } catch (err: any) {
-      alert('Failed to save bill transaction: ' + err.message);
+      toast.error('Failed to save bill transaction: ' + err.message);
     }
   };
 
@@ -890,32 +953,47 @@ export const SalesBillingPage: React.FC<SalesBillingPageProps> = ({
 
         {/* Customer Selection Row */}
         <div className="mt-3 pt-3 border-t border-slate-200 dark:border-slate-800 flex flex-wrap items-center justify-between gap-3 text-xs">
-          <div className="flex-1 flex items-center space-x-2 min-w-[300px]">
-            <span className="font-bold text-slate-700 dark:text-slate-300 uppercase">Customer:</span>
-            <select
-              value={selectedCustomerId}
-              onChange={(e) => {
-                const found = customers.find((c) => c.id === e.target.value);
-                if (found) handleSelectCustomer(found);
-              }}
-              className="flex-1 px-3 py-1.5 font-bold uppercase text-sm border border-slate-300 dark:border-slate-700 dark:bg-slate-800"
-            >
-              {customers.map((c) => (
-                <option key={c.id} value={c.id}>
-                  {c.name} ({c.city}) - {c.is_gst_registered ? `GST: ${c.gstin}` : 'UNREGISTERED NON-GST'}
-                </option>
-              ))}
-            </select>
+          <div className="flex-1 flex flex-col min-w-[300px]">
+            <div className="flex items-center space-x-2">
+              <span className="font-bold text-slate-700 dark:text-slate-300 uppercase">Customer:</span>
+              <select
+                ref={customerSelectRef}
+                value={selectedCustomerId}
+                onChange={(e) => {
+                  const found = customers.find((c) => c.id === e.target.value);
+                  if (found) {
+                    handleSelectCustomer(found);
+                    setCustomerError(false);
+                  }
+                }}
+                className={`flex-1 px-3 py-1.5 font-bold uppercase text-sm border rounded-sm ${
+                  customerError
+                    ? 'border-rose-500 ring-2 ring-rose-500/30 bg-rose-50 dark:bg-rose-950/20'
+                    : 'border-slate-300 dark:border-slate-700 dark:bg-slate-800'
+                }`}
+              >
+                {customers.map((c) => (
+                  <option key={c.id} value={c.id}>
+                    {c.name} ({c.city}) - {c.is_gst_registered ? `GST: ${c.gstin}` : 'UNREGISTERED NON-GST'}
+                  </option>
+                ))}
+              </select>
 
-            <button
-              type="button"
-              onClick={() => setPartyModalOpen(true)}
-              className="px-3 py-1.5 bg-sky-600 hover:bg-sky-500 text-white font-bold rounded-sm flex items-center space-x-1 flex-shrink-0 shadow-sm"
-              title="Add New Customer [Alt+C]"
-            >
-              <UserPlus className="w-3.5 h-3.5" />
-              <span>+ New Client [Alt+C]</span>
-            </button>
+              <button
+                type="button"
+                onClick={() => setPartyModalOpen(true)}
+                className="px-3 py-1.5 bg-sky-600 hover:bg-sky-500 text-white font-bold rounded-sm flex items-center space-x-1 flex-shrink-0 shadow-sm"
+                title="Add New Customer [Alt+C]"
+              >
+                <UserPlus className="w-3.5 h-3.5" />
+                <span>+ New Client [Alt+C]</span>
+              </button>
+            </div>
+            {customerError && (
+              <span className="text-[11px] font-bold text-rose-600 dark:text-rose-400 mt-1 pl-20 flex items-center gap-1">
+                <AlertTriangle className="w-3 h-3" /> Retailer / Customer is required to generate wholesale invoice
+              </span>
+            )}
           </div>
 
           {/* Customer Metadata Snapshot */}
@@ -1014,79 +1092,115 @@ export const SalesBillingPage: React.FC<SalesBillingPageProps> = ({
                   <tr key={row.id} className="hover:bg-slate-50 dark:hover:bg-slate-800/40">
                     <td className="text-center font-mono text-slate-400 text-xs">{idx + 1}</td>
 
-                    {/* Medicine Name with Autocomplete Trigger */}
+                    {/* Medicine Name with Keyboard Autocomplete Trigger */}
                     <td className="relative">
-                      <div className="flex items-center space-x-1">
-                        <input
-                          type="text"
-                          value={row.product_name}
-                          onChange={(e) => {
-                            const val = e.target.value.toUpperCase();
-                            handleUpdateItem(idx, 'product_name', val);
-                            setSearchTerm(val);
-                            setActiveSearchIndex(idx);
-                          }}
-                          onFocus={() => {
-                            setActiveSearchIndex(idx);
-                            setSearchTerm(row.product_name);
-                          }}
-                          placeholder="Type 2+ letters e.g. DISPO"
-                          className="w-full px-2 py-1 font-bold uppercase text-xs border border-slate-300 dark:border-slate-700 dark:bg-slate-800"
-                        />
-                      </div>
+                      {(() => {
+                        const filteredMeds = medicines
+                          .filter((m) => m.name.toLowerCase().includes(searchTerm.toLowerCase()))
+                          .slice(0, 30);
 
-                      {/* Medicine Search Dropdown */}
-                      {activeSearchIndex === idx && searchTerm.length >= 1 && (
-                        <div className="absolute left-0 top-full z-40 w-80 bg-white dark:bg-slate-900 border-2 border-slate-700 shadow-xl max-h-48 overflow-y-auto">
-                          {medicines
-                            .filter((m) => m.name.toLowerCase().includes(searchTerm.toLowerCase()))
-                            .map((m) => (
-                              <div
-                                key={m.id}
-                                onClick={() => {
-                                  setActiveSearchIndex(null);
-                                  handleOpenBatchPicker(idx, m);
+                        return (
+                          <>
+                            <div className="flex items-center space-x-1">
+                              <input
+                                type="text"
+                                value={row.product_name}
+                                onChange={(e) => {
+                                  const val = e.target.value.toUpperCase();
+                                  handleUpdateItem(idx, 'product_name', val);
+                                  setSearchTerm(val);
+                                  setActiveSearchIndex(idx);
+                                  setHighlightedMedIndex(0);
                                 }}
-                                className="p-2 border-b border-slate-200 dark:border-slate-800 hover:bg-sky-50 dark:hover:bg-sky-950/60 cursor-pointer text-xs"
+                                onFocus={() => {
+                                  setActiveSearchIndex(idx);
+                                  setSearchTerm(row.product_name);
+                                  setHighlightedMedIndex(0);
+                                }}
+                                onKeyDown={(e) => {
+                                  if (activeSearchIndex === idx && filteredMeds.length > 0) {
+                                    if (e.key === 'ArrowDown') {
+                                      e.preventDefault();
+                                      setHighlightedMedIndex((prev) => Math.min(prev + 1, filteredMeds.length - 1));
+                                    } else if (e.key === 'ArrowUp') {
+                                      e.preventDefault();
+                                      setHighlightedMedIndex((prev) => Math.max(prev - 1, 0));
+                                    } else if (e.key === 'Enter') {
+                                      e.preventDefault();
+                                      const sel = filteredMeds[highlightedMedIndex] || filteredMeds[0];
+                                      if (sel) {
+                                        setActiveSearchIndex(null);
+                                        handleOpenBatchPicker(idx, sel);
+                                      }
+                                    } else if (e.key === 'Escape') {
+                                      e.preventDefault();
+                                      setActiveSearchIndex(null);
+                                    }
+                                  }
+                                }}
+                                placeholder="Type 2+ letters e.g. DISPO [↓ to navigate]"
+                                className="w-full px-2 py-1 font-bold uppercase text-xs border border-slate-300 dark:border-slate-700 dark:bg-slate-800 focus:border-sky-500"
+                              />
+                            </div>
+
+                            {/* Medicine Search Dropdown with Full Keyboard Navigation */}
+                            {activeSearchIndex === idx && searchTerm.length >= 1 && (
+                              <div
+                                role="listbox"
+                                className="absolute left-0 top-full z-40 w-80 bg-white dark:bg-slate-900 border-2 border-slate-700 shadow-2xl max-h-48 overflow-y-auto rounded-sm modal-surface"
                               >
-                                <div className="font-extrabold text-slate-900 dark:text-white uppercase">
-                                  {m.name}
-                                </div>
-                                <div className="text-[10px] text-slate-500">
-                                  Pack: {m.pack_size} • Mfg: {m.mfg_by} • GST: {m.gst_percent}%
-                                </div>
+                                {filteredMeds.map((m, mIdx) => {
+                                  const isHighlighted = mIdx === highlightedMedIndex;
+                                  return (
+                                    <div
+                                      key={m.id}
+                                      role="option"
+                                      aria-selected={isHighlighted}
+                                      onClick={() => {
+                                        setActiveSearchIndex(null);
+                                        handleOpenBatchPicker(idx, m);
+                                      }}
+                                      onMouseEnter={() => setHighlightedMedIndex(mIdx)}
+                                      className={`p-2 border-b border-slate-200 dark:border-slate-800 cursor-pointer text-xs transition-colors ${
+                                        isHighlighted
+                                          ? 'bg-sky-600 text-white'
+                                          : 'hover:bg-sky-50 dark:hover:bg-sky-950/60'
+                                      }`}
+                                    >
+                                      <div className={`font-extrabold uppercase ${isHighlighted ? 'text-white' : 'text-slate-900 dark:text-white'}`}>
+                                        {m.name}
+                                      </div>
+                                      <div className={`text-[10px] ${isHighlighted ? 'text-sky-100' : 'text-slate-500'}`}>
+                                        Pack: {m.pack_size} • Mfg: {m.mfg_by} • GST: {m.gst_percent}%
+                                      </div>
+                                    </div>
+                                  );
+                                })}
                               </div>
-                            ))}
-                        </div>
-                      )}
+                            )}
+                          </>
+                        );
+                      })()}
                     </td>
 
-                    {/* Batch No & Selector Button */}
+                    {/* Batch Trigger Button (Item 6: Clear Affordance) */}
                     <td>
-                      <div className="flex items-center space-x-1">
-                        <input
-                          type="text"
-                          value={row.batch_no}
-                          readOnly
-                          onClick={() => {
-                            const med = medicines.find((m) => m.name === row.product_name);
-                            if (med) handleOpenBatchPicker(idx, med);
-                          }}
-                          placeholder="Batch"
-                          className="w-full px-1.5 py-1 font-mono font-bold text-xs border border-slate-300 dark:border-slate-700 dark:bg-slate-800 cursor-pointer bg-slate-50"
-                        />
-                        <button
-                          type="button"
-                          onClick={() => {
-                            const med = medicines.find((m) => m.name === row.product_name);
-                            if (med) handleOpenBatchPicker(idx, med);
-                          }}
-                          className="p-1 bg-slate-200 dark:bg-slate-700 hover:bg-slate-300 rounded text-slate-700 dark:text-slate-200"
-                          title="Open Batch Selector"
-                        >
-                          <Boxes className="w-3.5 h-3.5" />
-                        </button>
-                      </div>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const med = medicines.find((m) => m.name === row.product_name);
+                          if (med) handleOpenBatchPicker(idx, med);
+                        }}
+                        className="w-full px-2 py-1 text-left font-mono font-bold text-xs bg-slate-100 hover:bg-sky-50 dark:bg-slate-800 dark:hover:bg-slate-700/80 border border-slate-300 dark:border-slate-700 rounded-sm flex items-center justify-between group transition-colors"
+                        title="Click or press F3 to select batch"
+                      >
+                        <span className={row.batch_no ? 'text-slate-900 dark:text-white truncate max-w-[85px]' : 'text-slate-400 italic text-[11px]'}>
+                          {row.batch_no || 'Select Batch...'}
+                        </span>
+                        <span className="text-[9px] bg-slate-200 dark:bg-slate-700 group-hover:bg-sky-600 group-hover:text-white px-1 rounded text-slate-500 font-mono transition-colors">
+                          F3
+                        </span>
+                      </button>
                     </td>
 
                     {/* Expiry */}
@@ -1101,14 +1215,17 @@ export const SalesBillingPage: React.FC<SalesBillingPageProps> = ({
                       </span>
                     </td>
 
-                    {/* Qty */}
+                    {/* Qty with ref for auto-focus handover (Item 3) */}
                     <td>
                       <input
+                        ref={(el) => {
+                          qtyInputRefs.current[idx] = el;
+                        }}
                         type="number"
                         min="1"
                         value={row.qty}
                         onChange={(e) => handleUpdateItem(idx, 'qty', parseInt(e.target.value, 10) || 0)}
-                        className="w-full px-1.5 py-1 text-center font-bold font-mono text-xs border border-slate-300 dark:border-slate-700 dark:bg-slate-800"
+                        className="w-full px-1.5 py-1 text-center font-bold font-mono text-xs border border-slate-300 dark:border-slate-700 dark:bg-slate-800 focus:border-sky-500"
                       />
                     </td>
 

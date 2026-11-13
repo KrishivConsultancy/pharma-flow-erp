@@ -33,6 +33,7 @@ import { PartyFormModal } from '../components/modals/PartyFormModal';
 import { PaymentEntryModal } from '../components/modals/PaymentEntryModal';
 import { InvoicePrintModal } from '../components/print/InvoicePrintModal';
 import { CsvExportService } from '../services/csvExportService';
+import { toast } from '../services/toastService';
 
 type PartyFilterType = 'ALL' | 'CUSTOMER' | 'VENDOR';
 type SubTabType = 'INVOICES' | 'LEDGER' | 'RATE_WATCHDOG';
@@ -151,21 +152,21 @@ export const PartiesKhataPage: React.FC<PartiesKhataPageProps> = ({ company }) =
   // Delete Party with safety validation
   const handleDeleteParty = async () => {
     if (!selectedParty) return;
-    if (
-      !window.confirm(
-        `Are you sure you want to delete ${selectedParty.name}?\n\nNote: Parties with recorded invoices or ledger transactions cannot be deleted to maintain financial integrity.`
-      )
-    ) {
-      return;
-    }
+    const confirmed = await toast.confirm({
+      title: `Delete Party: ${selectedParty.name}?`,
+      message: 'Parties with recorded invoices or ledger history cannot be deleted to preserve financial audit integrity.\n\nAre you sure you want to proceed?',
+      confirmText: 'Delete Party',
+      isDestructive: true,
+    });
+    if (!confirmed) return;
 
     try {
       await dbService.deleteParty(selectedParty.id);
-      alert('✅ Party deleted successfully.');
+      toast.success(`${selectedParty.name} deleted successfully.`);
       setSelectedParty(null);
       await loadParties();
     } catch (err: any) {
-      alert(`Cannot delete party: ${err.message}`);
+      toast.error(`Cannot delete party: ${err.message}`);
     }
   };
 

@@ -21,6 +21,7 @@ import { dbService } from '../db/databaseService';
 import { supabaseSync, SyncStatus } from '../db/supabaseSync';
 import { cashfreeService } from '../services/cashfreeService';
 import { geminiOcrService } from '../services/geminiOcrService';
+import { toast } from '../services/toastService';
 
 interface SettingsBackupPageProps {
   company: CompanyProfile;
@@ -127,16 +128,21 @@ export const SettingsBackupPage: React.FC<SettingsBackupPageProps> = ({
 
   // 1-Click Restore From Supabase Cloud
   const handleRestoreFromCloud = async () => {
-    const confirmRestore = confirm(
-      'Are you sure you want to restore the entire database from Supabase Cloud? Any unsynced local changes will be replaced.'
-    );
+    const confirmRestore = await toast.confirm({
+      title: 'Restore Database from Supabase Cloud?',
+      message: 'This will replace all local data with the latest cloud snapshot. Any unsynced changes will be overwritten.\n\nProceed?',
+      confirmText: 'Restore from Cloud',
+      isDestructive: true,
+    });
     if (!confirmRestore) return;
 
     try {
       const res = await supabaseSync.restoreFromCloud();
+      toast.success(res.message, { title: 'Cloud Restore Complete' });
       setStatusMessage({ type: 'success', text: res.message });
       setTimeout(() => window.location.reload(), 1500);
     } catch (err: any) {
+      toast.error('Cloud restore failed: ' + err.message);
       setStatusMessage({ type: 'error', text: 'Cloud restore failed: ' + err.message });
     }
   };
@@ -155,8 +161,10 @@ export const SettingsBackupPage: React.FC<SettingsBackupPageProps> = ({
       link.click();
       document.body.removeChild(link);
       URL.revokeObjectURL(url);
+      toast.success('Full database JSON backup downloaded successfully!');
       setStatusMessage({ type: 'success', text: 'Full database JSON backup downloaded successfully!' });
     } catch (err: any) {
+      toast.error('Backup export failed: ' + err.message);
       setStatusMessage({ type: 'error', text: 'Backup export failed: ' + err.message });
     }
   };
@@ -171,28 +179,35 @@ export const SettingsBackupPage: React.FC<SettingsBackupPageProps> = ({
       try {
         const content = reader.result as string;
         await dbService.importEntireDatabaseJson(content);
+        toast.success('Database successfully restored from JSON backup file!', { title: 'Restore Succeeded' });
         setStatusMessage({ type: 'success', text: 'Database successfully restored from JSON backup file!' });
         setTimeout(() => window.location.reload(), 1500);
       } catch (err: any) {
+        toast.error('Failed to restore backup: ' + err.message);
         setStatusMessage({ type: 'error', text: 'Failed to restore backup: ' + err.message });
       }
     };
     reader.readAsText(file);
   };
 
-  // Wipe & Factory Reset Database
+  // Wipe & Factory Reset Database with Typed Safeguard (Item 7)
   const handleWipeAndReset = async () => {
-    const confirmWipe = window.confirm(
-      '⚠️ CRITICAL WARNING: WIPE & FACTORY RESET DATABASE\n\nThis will permanently delete:\n- ALL Sales & Purchase Invoices\n- ALL Inventory Batches (Stock valuation to ₹0)\n- ALL Customers & Vendors\n- ALL Ledger Transactions\n\nThe official Radha Drugs company profile will be preserved.\n\nAre you sure you want to completely wipe the database?'
-    );
+    const confirmWipe = await toast.confirm({
+      title: 'CRITICAL WARNING: WIPE DATABASE TO 0',
+      message: 'This action is IRREVERSIBLE and will permanently delete:\n• ALL Sales Bills & Quotations\n• ALL Stock Purchase Bills\n• ALL Inventory Batches (Stock valuation to ₹0)\n• ALL Retailers, Customers & Vendors\n• ALL Financial Ledger Transactions\n\nThe Radha Drugs official company profile will remain intact.',
+      confirmText: 'Wipe & Reset to 0',
+      cancelText: 'Cancel & Abort',
+      isDestructive: true,
+      typedKeyword: 'WIPE',
+    });
     if (!confirmWipe) return;
 
     try {
       await dbService.wipeAndResetDatabase();
-      alert('✅ Database completely wiped to 0. Clean production state ready.');
-      window.location.reload();
+      toast.success('Database completely wiped to 0. Clean production state ready.', { title: 'Factory Reset Complete' });
+      setTimeout(() => window.location.reload(), 1200);
     } catch (err: any) {
-      alert('Failed to reset database: ' + err.message);
+      toast.error('Failed to reset database: ' + err.message);
     }
   };
 

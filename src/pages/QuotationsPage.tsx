@@ -31,6 +31,7 @@ import {
   TaxType,
 } from '../db/schema';
 import { QuotationPrintModal } from '../components/print/QuotationPrintModal';
+import { toast } from '../services/toastService';
 
 interface QuotationsPageProps {
   company: CompanyProfile;
@@ -367,13 +368,13 @@ export const QuotationsPage: React.FC<QuotationsPageProps> = ({
   // Save Quotation
   const handleSaveQuotation = async (andPrint: boolean = false, andConvert: boolean = false) => {
     if (!selectedCustomer) {
-      alert('Please select a customer for this quotation.');
+      toast.error('Please select a customer for this quotation.', { title: 'Customer Required' });
       return;
     }
 
     const validItems = items.filter((it) => it.product_name && it.qty > 0);
     if (validItems.length === 0) {
-      alert('Please add at least one product with quantity greater than zero.');
+      toast.error('Please add at least one product with quantity greater than zero.', { title: 'Empty Quotation' });
       return;
     }
 
@@ -452,7 +453,7 @@ export const QuotationsPage: React.FC<QuotationsPageProps> = ({
         }
       }
     } catch (err: any) {
-      alert(`Failed to save quotation: ${err.message}`);
+      toast.error(`Failed to save quotation: ${err.message}`);
     }
   };
 
@@ -467,14 +468,20 @@ export const QuotationsPage: React.FC<QuotationsPageProps> = ({
 
   // Delete Quotation
   const handleDeleteQuotation = async (q: Quotation) => {
-    const confirmMsg = `⚠️ Delete Quotation ${q.quotation_no} for ${q.customer_name}?\n\nThis will remove the quotation permanently. Inventory stock is not affected.`;
-    if (!confirm(confirmMsg)) return;
+    const confirmed = await toast.confirm({
+      title: `Delete Quotation #${q.quotation_no}?`,
+      message: `Customer: ${q.customer_name}\n\nThis will remove the quotation permanently. Inventory stock is not affected.`,
+      confirmText: 'Delete Quotation',
+      isDestructive: true,
+    });
+    if (!confirmed) return;
 
     try {
       await dbService.deleteQuotation(q.id);
+      toast.success(`Quotation #${q.quotation_no} deleted.`);
       await loadQuotations();
     } catch (err: any) {
-      alert(`Failed to delete quotation: ${err.message}`);
+      toast.error(`Failed to delete quotation: ${err.message}`);
     }
   };
 

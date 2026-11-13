@@ -30,6 +30,7 @@ import {
 import { AiInvoiceScanModal } from '../components/modals/AiInvoiceScanModal';
 import { PartyFormModal } from '../components/modals/PartyFormModal';
 import { ExtractedInvoice, GeminiOcrService } from '../services/geminiOcrService';
+import { toast } from '../services/toastService';
 
 interface PurchaseLineRow {
   id: string;
@@ -64,6 +65,7 @@ export const PurchaseEntryPage: React.FC<PurchaseEntryPageProps> = ({ company })
   const [vendors, setVendors] = useState<Party[]>([]);
   const [selectedVendorId, setSelectedVendorId] = useState<string>('');
   const [selectedVendor, setSelectedVendor] = useState<Party | null>(null);
+  const [vendorError, setVendorError] = useState<boolean>(false);
 
   const [supplierInvoiceNo, setSupplierInvoiceNo] = useState<string>('');
   const [invoiceDate, setInvoiceDate] = useState<string>(new Date().toISOString().substring(0, 10));
@@ -78,6 +80,7 @@ export const PurchaseEntryPage: React.FC<PurchaseEntryPageProps> = ({ company })
   const [aiScannerOpen, setAiScannerOpen] = useState<boolean>(false);
   const [partyModalOpen, setPartyModalOpen] = useState<boolean>(false);
   const csvInputRef = useRef<HTMLInputElement>(null);
+  const vendorSelectRef = useRef<HTMLSelectElement>(null);
 
   // Load vendors & medicines catalog
   const loadMasterData = async () => {
@@ -87,9 +90,10 @@ export const PurchaseEntryPage: React.FC<PurchaseEntryPageProps> = ({ company })
       );
       setVendors(vends);
 
-      if (!selectedVendorId && vends.length > 0) {
-        setSelectedVendorId(vends[0].id);
-        setSelectedVendor(vends[0]);
+      // Do NOT auto-select the first vendor to prevent accidental ledger booking
+      if (selectedVendorId) {
+        const found = vends.find(v => v.id === selectedVendorId);
+        if (found) setSelectedVendor(found);
       }
 
       const meds = await dbService.query<MedicineMaster>('SELECT * FROM medicines_master ORDER BY name ASC');
@@ -347,7 +351,7 @@ export const PurchaseEntryPage: React.FC<PurchaseEntryPageProps> = ({ company })
       const text = reader.result as string;
       const lines = text.split(/\r?\n/).filter((l) => l.trim().length > 0);
       if (lines.length < 2) {
-        alert('Invalid CSV file: at least one header and one data row required.');
+        toast.error('Invalid CSV file: at least one header and one data row required.');
         return;
       }
 
@@ -387,7 +391,7 @@ export const PurchaseEntryPage: React.FC<PurchaseEntryPageProps> = ({ company })
 
       if (rows.length > 0) {
         setItems(rows);
-        alert(`Successfully imported ${rows.length} items from CSV!`);
+        toast.success(`Successfully imported ${rows.length} items from CSV!`);
       }
     };
     reader.readAsText(file);
@@ -406,17 +410,21 @@ export const PurchaseEntryPage: React.FC<PurchaseEntryPageProps> = ({ company })
   // ATOMIC COMMIT: Save Purchase Bill & Add to Physical Stock
   const handleSavePurchaseBill = async () => {
     if (!selectedVendor) {
-      alert('Please select a supplier / vendor.');
+      setVendorError(true);
+      toast.error('Please select a supplier / vendor first.', { title: 'Vendor Required' });
+      vendorSelectRef.current?.focus();
       return;
     }
+    setVendorError(false);
+
     if (!supplierInvoiceNo.trim()) {
-      alert('Please enter supplier invoice number.');
+      toast.error('Please enter supplier invoice number.', { title: 'Invoice Number Required' });
       return;
     }
 
     const validItems = items.filter((it) => it.product_name && (it.billed_qty + it.free_qty) > 0 && it.batch_no);
     if (validItems.length === 0) {
-      alert('Please add at least one valid item with batch and quantity.');
+      toast.error('Please add at least one valid item with batch and quantity.', { title: 'Empty Inward Bill' });
       return;
     }
 
@@ -488,14 +496,14 @@ export const PurchaseEntryPage: React.FC<PurchaseEntryPageProps> = ({ company })
 
     try {
       await dbService.savePurchaseTransaction(purchaseHeader, purchaseItems, newMedicines);
-      alert(`✅ Purchase Bill ${supplierInvoiceNo} saved successfully! ${validItems.length} batches added to inventory stock.`);
+      toast.success(`Purchase Bill ${supplierInvoiceNo} saved successfully! ${validItems.length} batches added to inventory.`, { title: 'Stock Inward Recorded' });
 
       // Reset
       setSupplierInvoiceNo('');
       setItems([]);
       handleAddNewRow();
     } catch (err: any) {
-      alert('Failed to save purchase bill: ' + err.message);
+      toast.error('Failed to save purchase bill: ' + err.message);
     }
   };
 
@@ -558,16 +566,25 @@ export const PurchaseEntryPage: React.FC<PurchaseEntryPageProps> = ({ company })
             </label>
             <div className="flex space-x-2">
               <select
+                ref={vendorSelectRef}
                 value={selectedVendorId}
                 onChange={(e) => {
                   const found = vendors.find((v) => v.id === e.target.value);
                   if (found) {
                     setSelectedVendorId(found.id);
                     setSelectedVendor(found);
+                    setVendorError(false);
                   }
                 }}
-                className="flex-1 px-3 py-1.5 font-bold uppercase text-xs border border-slate-300 dark:border-slate-700 dark:bg-slate-800"
+                className={`flex-1 px-3 py-1.5 font-bold uppercase text-xs border rounded-sm ${
+                  vendorError
+                    ? 'border-rose-500 ring-2 ring-rose-500/30 bg-rose-50 dark:bg-rose-950/20'
+                    : 'border-slate-300 dark:border-slate-700 dark:bg-slate-800'
+                }`}
               >
+                <option value="" disabled>
+                  -- Select Supplier / Vendor [Alt+V] --
+                </option>
                 {vendors.map((v) => (
                   <option key={v.id} value={v.id}>
                     {v.name} ({v.city}, {v.state_name}) - GST: {v.gstin || 'UNREGISTERED'}

@@ -5,6 +5,7 @@ import React, { useState, useEffect } from 'react';
 import { X, ArrowDownRight, ArrowUpRight, IndianRupee, Check } from 'lucide-react';
 import { Party } from '../../db/schema';
 import { dbService } from '../../db/databaseService';
+import { toast } from '../../services/toastService';
 
 interface PaymentEntryModalProps {
   isOpen: boolean;
@@ -50,7 +51,7 @@ export const PaymentEntryModal: React.FC<PaymentEntryModalProps> = ({
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (numAmount <= 0) {
-      alert('Please enter a valid payment amount greater than zero.');
+      toast.error('Please enter a valid payment amount greater than zero.', { title: 'Invalid Amount' });
       return;
     }
 
@@ -65,18 +66,24 @@ export const PaymentEntryModal: React.FC<PaymentEntryModalProps> = ({
         voucher_type: voucherType,
       });
 
+      toast.success(`₹${numAmount.toFixed(2)} voucher recorded for ${party.name}`);
       if (onSaved) onSaved();
       onClose();
     } catch (err: any) {
-      alert('Payment settlement failed: ' + err.message);
+      toast.error('Payment settlement failed: ' + err.message);
     } finally {
       setIsSubmitting(false);
     }
   };
 
   return (
-    <div className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-4">
-      <div className="bg-white dark:bg-slate-900 border-2 border-slate-700 w-full max-w-lg shadow-2xl rounded-sm flex flex-col">
+    <div
+      role="dialog"
+      aria-modal="true"
+      className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4"
+      style={{ animation: 'backdropFadeIn 150ms ease-out forwards' }}
+    >
+      <div className="bg-white dark:bg-slate-900 border-2 border-slate-700 w-full max-w-lg shadow-2xl rounded-sm flex flex-col modal-surface">
         {/* Header */}
         <div className="bg-slate-100 dark:bg-slate-800 border-b border-slate-300 dark:border-slate-700 px-4 py-3 flex items-center justify-between">
           <div className="flex items-center space-x-2">

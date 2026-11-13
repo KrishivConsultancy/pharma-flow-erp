@@ -5,6 +5,7 @@ import React, { useState, useEffect } from 'react';
 import { Printer, Download, Share2, X, Minimize2, Maximize2, ShoppingCart } from 'lucide-react';
 import { CompanyProfile, Quotation, QuotationItem } from '../../db/schema';
 import { QuotationPrintTemplate } from './QuotationPrintTemplate';
+import { toast } from '../../services/toastService';
 
 interface QuotationPrintModalProps {
   isOpen: boolean;
@@ -57,12 +58,12 @@ export const QuotationPrintModal: React.FC<QuotationPrintModalProps> = ({
           isHalfPage: layout === 'half',
         });
         if (res.success) {
-          alert(`✅ Quotation PDF saved to:\n${res.filePath}`);
+          toast.success(`Quotation PDF saved to:\n${res.filePath}`, { title: 'PDF Exported' });
         } else if (!res.cancelled) {
-          alert(`Failed to save PDF: ${res.error}`);
+          toast.error(`Failed to save PDF: ${res.error}`);
         }
       } catch (err: any) {
-        alert(`PDF export error: ${err.message}`);
+        toast.error(`PDF export error: ${err.message}`);
       }
     } else {
       window.print();

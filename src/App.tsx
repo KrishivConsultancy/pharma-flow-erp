@@ -1,7 +1,7 @@
 // Radha Drugs Wholesale Pharmaceutical ERP - Root Application Controller
 // Offline-first SQLite persistence, global F-key router, and high-contrast Enterprise UI
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, Suspense, lazy } from 'react';
 import { dbService } from './db/databaseService';
 import { CompanyProfile } from './db/schema';
 import { SEED_COMPANY_PROFILE } from './db/seedData';
@@ -9,17 +9,26 @@ import { TopHeader } from './components/layout/TopHeader';
 import { Sidebar } from './components/layout/Sidebar';
 import { UpdaterBanner } from './components/layout/UpdaterBanner';
 import { CommandPaletteModal } from './components/layout/CommandPaletteModal';
+import { ToastContainer } from './components/common/ToastContainer';
 
-// Pages
+// Route Code-Splitting: Lazy-load heavy operational modules to accelerate initial dashboard boot
 import { DashboardPage } from './pages/DashboardPage';
-import { SalesBillingPage } from './pages/SalesBillingPage';
-import { PurchaseEntryPage } from './pages/PurchaseEntryPage';
-import { InventoryBatchesPage } from './pages/InventoryBatchesPage';
-import { PartiesKhataPage } from './pages/PartiesKhataPage';
-import { ReturnsAdjustmentsPage } from './pages/ReturnsAdjustmentsPage';
-import { ReportsProfitLossPage } from './pages/ReportsProfitLossPage';
-import { SettingsBackupPage } from './pages/SettingsBackupPage';
-import { QuotationsPage } from './pages/QuotationsPage';
+const SalesBillingPage = lazy(() => import('./pages/SalesBillingPage').then(m => ({ default: m.SalesBillingPage })));
+const PurchaseEntryPage = lazy(() => import('./pages/PurchaseEntryPage').then(m => ({ default: m.PurchaseEntryPage })));
+const QuotationsPage = lazy(() => import('./pages/QuotationsPage').then(m => ({ default: m.QuotationsPage })));
+const InventoryBatchesPage = lazy(() => import('./pages/InventoryBatchesPage').then(m => ({ default: m.InventoryBatchesPage })));
+const PartiesKhataPage = lazy(() => import('./pages/PartiesKhataPage').then(m => ({ default: m.PartiesKhataPage })));
+const ReturnsAdjustmentsPage = lazy(() => import('./pages/ReturnsAdjustmentsPage').then(m => ({ default: m.ReturnsAdjustmentsPage })));
+const ReportsProfitLossPage = lazy(() => import('./pages/ReportsProfitLossPage').then(m => ({ default: m.ReportsProfitLossPage })));
+const SettingsBackupPage = lazy(() => import('./pages/SettingsBackupPage').then(m => ({ default: m.SettingsBackupPage })));
+
+// Lightweight Route Loading Skeleton for zero layout shift
+const RouteLoadingFallback: React.FC = () => (
+  <div className="flex-1 flex flex-col items-center justify-center p-8 text-slate-400 bg-slate-50 dark:bg-slate-950">
+    <div className="w-8 h-8 border-3 border-sky-500 border-t-transparent rounded-full animate-spin mb-3" />
+    <span className="text-xs font-bold uppercase tracking-wider text-slate-500">Loading Module...</span>
+  </div>
+);
 
 export const App: React.FC = () => {
   const [activePage, setActivePage] = useState<string>('dashboard');
@@ -157,50 +166,55 @@ export const App: React.FC = () => {
       {/* GitHub Native Auto-Updater Notification Banner */}
       <UpdaterBanner />
 
+      {/* Global Non-blocking Toast & Confirmation Notification System */}
+      <ToastContainer />
+
       {/* Main Split Layout: Sidebar + Active Page */}
       <div className="flex-1 flex overflow-hidden">
         <Sidebar activePage={activePage} onNavigate={handleNavigate} />
 
         <main className="flex-1 flex flex-col overflow-hidden">
-          {activePage === 'dashboard' && (
-            <DashboardPage company={company} onNavigate={handleNavigate} />
-          )}
-          {activePage === 'sales' && (
-            <SalesBillingPage
-              company={company}
-              initialMode={pageParams?.mode}
-              initialQuotation={pageParams?.quotationToConvert}
-            />
-          )}
-          {activePage === 'quotations' && (
-            <QuotationsPage
-              company={company}
-              onNavigateToSale={(quotation) => {
-                handleNavigate('sales', { quotationToConvert: quotation });
-              }}
-            />
-          )}
-          {activePage === 'purchase' && (
-            <PurchaseEntryPage company={company} />
-          )}
-          {activePage === 'inventory' && (
-            <InventoryBatchesPage company={company} onNavigate={handleNavigate} />
-          )}
-          {activePage === 'parties' && (
-            <PartiesKhataPage company={company} />
-          )}
-          {activePage === 'returns' && (
-            <ReturnsAdjustmentsPage company={company} initialBatchId={pageParams?.batchId} />
-          )}
-          {activePage === 'reports' && (
-            <ReportsProfitLossPage company={company} />
-          )}
-          {activePage === 'settings' && (
-            <SettingsBackupPage
-              company={company}
-              onCompanyUpdated={(updated) => setCompany(updated)}
-            />
-          )}
+          <Suspense fallback={<RouteLoadingFallback />}>
+            {activePage === 'dashboard' && (
+              <DashboardPage company={company} onNavigate={handleNavigate} />
+            )}
+            {activePage === 'sales' && (
+              <SalesBillingPage
+                company={company}
+                initialMode={pageParams?.mode}
+                initialQuotation={pageParams?.quotationToConvert}
+              />
+            )}
+            {activePage === 'quotations' && (
+              <QuotationsPage
+                company={company}
+                onNavigateToSale={(quotation) => {
+                  handleNavigate('sales', { quotationToConvert: quotation });
+                }}
+              />
+            )}
+            {activePage === 'purchase' && (
+              <PurchaseEntryPage company={company} />
+            )}
+            {activePage === 'inventory' && (
+              <InventoryBatchesPage company={company} onNavigate={handleNavigate} />
+            )}
+            {activePage === 'parties' && (
+              <PartiesKhataPage company={company} />
+            )}
+            {activePage === 'returns' && (
+              <ReturnsAdjustmentsPage company={company} initialBatchId={pageParams?.batchId} />
+            )}
+            {activePage === 'reports' && (
+              <ReportsProfitLossPage company={company} />
+            )}
+            {activePage === 'settings' && (
+              <SettingsBackupPage
+                company={company}
+                onCompanyUpdated={(updated) => setCompany(updated)}
+              />
+            )}
+          </Suspense>
         </main>
       </div>
     </div>

@@ -84,8 +84,13 @@ export const BatchPickerModal: React.FC<BatchPickerModalProps> = ({
   };
 
   return (
-    <div className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-4">
-      <div className="bg-white dark:bg-slate-900 border-2 border-slate-700 w-full max-w-4xl shadow-2xl rounded-sm flex flex-col max-h-[85vh]">
+    <div
+      role="dialog"
+      aria-modal="true"
+      className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4"
+      style={{ animation: 'backdropFadeIn 150ms ease-out forwards' }}
+    >
+      <div className="bg-white dark:bg-slate-900 border-2 border-slate-700 w-full max-w-4xl shadow-2xl rounded-sm flex flex-col max-h-[85vh] modal-surface">
         {/* Modal Header */}
         <div className="bg-slate-100 dark:bg-slate-800 border-b border-slate-300 dark:border-slate-700 px-4 py-3 flex items-center justify-between">
           <div>
