@@ -18,6 +18,7 @@ import { PartiesKhataPage } from './pages/PartiesKhataPage';
 import { ReturnsAdjustmentsPage } from './pages/ReturnsAdjustmentsPage';
 import { ReportsProfitLossPage } from './pages/ReportsProfitLossPage';
 import { SettingsBackupPage } from './pages/SettingsBackupPage';
+import { QuotationsPage } from './pages/QuotationsPage';
 
 export const App: React.FC = () => {
   const [activePage, setActivePage] = useState<string>('dashboard');
@@ -95,6 +96,10 @@ export const App: React.FC = () => {
           e.preventDefault();
           setActivePage('dashboard');
           break;
+        case 'F9':
+          e.preventDefault();
+          setActivePage('quotations');
+          break;
         default:
           break;
       }
@@ -144,7 +149,19 @@ export const App: React.FC = () => {
             <DashboardPage company={company} onNavigate={handleNavigate} />
           )}
           {activePage === 'sales' && (
-            <SalesBillingPage company={company} initialMode={pageParams?.mode} />
+            <SalesBillingPage
+              company={company}
+              initialMode={pageParams?.mode}
+              initialQuotation={pageParams?.quotationToConvert}
+            />
+          )}
+          {activePage === 'quotations' && (
+            <QuotationsPage
+              company={company}
+              onNavigateToSale={(quotation) => {
+                handleNavigate('sales', { quotationToConvert: quotation });
+              }}
+            />
           )}
           {activePage === 'purchase' && (
             <PurchaseEntryPage company={company} />

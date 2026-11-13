@@ -11,6 +11,7 @@ import {
   BarChart3,
   Settings,
   Database,
+  FileSpreadsheet,
 } from 'lucide-react';
 
 interface SidebarProps {
@@ -28,6 +29,7 @@ interface NavItem {
 export const NAV_ITEMS: NavItem[] = [
   { id: 'dashboard', label: 'Dashboard & Radar', fKey: 'F8', icon: LayoutDashboard },
   { id: 'sales', label: 'Wholesale Sales [F1]', fKey: 'F1', icon: Receipt },
+  { id: 'quotations', label: 'Quotations & Est. [F9]', fKey: 'F9', icon: FileSpreadsheet },
   { id: 'purchase', label: 'Stock Purchase [F2]', fKey: 'F2', icon: ShoppingCart },
   { id: 'inventory', label: 'Batch Inventory [F3]', fKey: 'F3', icon: Boxes },
   { id: 'parties', label: 'Parties & Khata [F4]', fKey: 'F4', icon: Users },

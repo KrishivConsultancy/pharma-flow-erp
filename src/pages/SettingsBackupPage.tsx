@@ -84,6 +84,7 @@ export const SettingsBackupPage: React.FC<SettingsBackupPageProps> = ({
           dl_no = ?, dl_valid_upto = ?, fssai_no = ?, bank_name = ?,
           bank_account_no = ?, bank_ifsc = ?, upi_id = ?, gst_invoice_prefix = ?,
           gst_invoice_next_no = ?, simple_bill_prefix = ?, simple_bill_next_no = ?,
+          quotation_prefix = ?, quotation_next_no = ?,
           financial_year = ?
         WHERE id = 'RADHA_DRUGS_MAIN'`,
         [
@@ -92,6 +93,7 @@ export const SettingsBackupPage: React.FC<SettingsBackupPageProps> = ({
           profile.dl_no, profile.dl_valid_upto, profile.fssai_no, profile.bank_name,
           profile.bank_account_no, profile.bank_ifsc, profile.upi_id, profile.gst_invoice_prefix,
           profile.gst_invoice_next_no, profile.simple_bill_prefix, profile.simple_bill_next_no,
+          profile.quotation_prefix || 'QT', profile.quotation_next_no || 101,
           profile.financial_year
         ]
       );
@@ -362,7 +364,7 @@ export const SettingsBackupPage: React.FC<SettingsBackupPageProps> = ({
             </div>
 
             {/* Series Configuration */}
-            <div className="grid grid-cols-2 gap-3 p-2.5 bg-slate-50 dark:bg-slate-800/80 border border-slate-200 dark:border-slate-700 rounded-sm">
+            <div className="grid grid-cols-3 gap-3 p-2.5 bg-slate-50 dark:bg-slate-800/80 border border-slate-200 dark:border-slate-700 rounded-sm">
               <div>
                 <label className="block font-bold text-slate-700 dark:text-slate-300 uppercase mb-1">
                   GST Invoice Next No.
@@ -398,6 +400,26 @@ export const SettingsBackupPage: React.FC<SettingsBackupPageProps> = ({
                     type="number"
                     value={profile.simple_bill_next_no}
                     onChange={(e) => setProfile({ ...profile, simple_bill_next_no: parseInt(e.target.value, 10) || 101 })}
+                    className="flex-1 px-2 py-1 font-mono font-bold border border-slate-300 dark:border-slate-700 dark:bg-slate-800"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="block font-bold text-slate-700 dark:text-slate-300 uppercase mb-1">
+                  Quotation Next No.
+                </label>
+                <div className="flex space-x-1">
+                  <input
+                    type="text"
+                    value={profile.quotation_prefix || 'QT'}
+                    onChange={(e) => setProfile({ ...profile, quotation_prefix: e.target.value })}
+                    className="w-12 px-2 py-1 font-mono font-bold uppercase text-center border border-slate-300 dark:border-slate-700 dark:bg-slate-800"
+                  />
+                  <input
+                    type="number"
+                    value={profile.quotation_next_no || 101}
+                    onChange={(e) => setProfile({ ...profile, quotation_next_no: parseInt(e.target.value, 10) || 101 })}
                     className="flex-1 px-2 py-1 font-mono font-bold border border-slate-300 dark:border-slate-700 dark:bg-slate-800"
                   />
                 </div>

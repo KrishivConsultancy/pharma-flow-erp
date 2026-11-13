@@ -90,6 +90,7 @@ export const TopHeader: React.FC<TopHeaderProps> = ({
       <div className="hidden lg:flex items-center space-x-1 text-xs">
         {[
           { key: 'F1', label: 'Sales Bill', page: 'sales' },
+          { key: 'F9', label: 'Quotations', page: 'quotations' },
           { key: 'F2', label: 'Purchase Entry', page: 'purchase' },
           { key: 'F3', label: 'Stock Batches', page: 'inventory' },
           { key: 'F4', label: 'Parties Khata', page: 'parties' },

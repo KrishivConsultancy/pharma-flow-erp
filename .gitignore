@@ -45,3 +45,8 @@ ehthumbs.db
 # Temporary SQLite Files
 *.sqlite-wal
 *.sqlite-shm
+
+# Legacy DB extraction raw files
+data/legacy_db/raw_dbf/
+data/legacy_db/csv/
+data/legacy_db/sqlite/

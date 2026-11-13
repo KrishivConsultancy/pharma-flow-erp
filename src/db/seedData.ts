@@ -36,6 +36,8 @@ export const SEED_COMPANY_PROFILE: CompanyProfile = {
   gst_invoice_next_no: 1157, // Formats as T001157 for next bill
   simple_bill_prefix: 'S',
   simple_bill_next_no: 101, // Formats as S000101
+  quotation_prefix: 'QT',
+  quotation_next_no: 101, // Formats as QT000101
   financial_year: '2026-27',
   terms_conditions: JSON.stringify([
     'Goods once sold can not be taken back.',

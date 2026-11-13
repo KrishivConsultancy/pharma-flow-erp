@@ -17,6 +17,7 @@ import {
   Percent,
   Boxes,
   HelpCircle,
+  FileSpreadsheet,
 } from 'lucide-react';
 import { dbService } from '../db/databaseService';
 import {
@@ -29,6 +30,8 @@ import {
   BillType,
   PaymentMode,
   TaxType,
+  Quotation,
+  QuotationItem,
 } from '../db/schema';
 import { BatchPickerModal } from '../components/modals/BatchPickerModal';
 import { PartyFormModal } from '../components/modals/PartyFormModal';
@@ -66,11 +69,13 @@ interface BillLineItem {
 interface SalesBillingPageProps {
   company: CompanyProfile;
   initialMode?: BillType;
+  initialQuotation?: Quotation;
 }
 
 export const SalesBillingPage: React.FC<SalesBillingPageProps> = ({
   company,
   initialMode = 'GST_INVOICE',
+  initialQuotation,
 }) => {
   const [billType, setBillType] = useState<BillType>(initialMode);
   const [customers, setCustomers] = useState<Party[]>([]);
@@ -104,6 +109,11 @@ export const SalesBillingPage: React.FC<SalesBillingPageProps> = ({
   // Search input dropdown states
   const [activeSearchIndex, setActiveSearchIndex] = useState<number | null>(null);
   const [searchTerm, setSearchTerm] = useState<string>('');
+
+  // Quotation Integration States
+  const [convertedQuotationId, setConvertedQuotationId] = useState<string | null>(null);
+  const [quotationPickerOpen, setQuotationPickerOpen] = useState<boolean>(false);
+  const [pendingQuotations, setPendingQuotations] = useState<Quotation[]>([]);
 
   const barcodeBufferRef = useRef<string>('');
   const lastKeyTimeRef = useRef<number>(0);
@@ -253,6 +263,9 @@ export const SalesBillingPage: React.FC<SalesBillingPageProps> = ({
       } else if (e.altKey && e.key.toLowerCase() === 'a') {
         e.preventDefault();
         handleAddNewRow();
+      } else if (e.altKey && e.key.toLowerCase() === 'q') {
+        e.preventDefault();
+        handleOpenLoadQuotationModal();
       }
     };
 
@@ -363,6 +376,205 @@ export const SalesBillingPage: React.FC<SalesBillingPageProps> = ({
     );
     setItems([...items, emptyRow]);
   };
+
+  // Load Quotation Into Billing Screen
+  const loadQuotationIntoBill = async (quote: Quotation) => {
+    try {
+      const data = await dbService.getQuotationById(quote.id);
+      if (!data) return;
+
+      const q = data.quotation;
+      const qItems = data.items;
+
+      // 1. Match or set Customer
+      const matchedCust = customers.find((c) => c.id === q.customer_id);
+      if (matchedCust) {
+        handleSelectCustomer(matchedCust);
+      } else {
+        const custObj: Party = {
+          id: q.customer_id,
+          name: q.customer_name,
+          legal_name: q.customer_name,
+          party_type: 'CUSTOMER',
+          is_gst_registered: q.customer_gstin ? 1 : 0,
+          phone: q.customer_phone || '',
+          gstin: q.customer_gstin || '',
+          dl_no: q.customer_dl_no || '',
+          fssai_no: '',
+          address: q.customer_address || '',
+          city: 'BEGUSARAI',
+          state_name: 'Bihar',
+          state_code: '10',
+          opening_balance: 0,
+          current_balance: 0,
+          credit_limit: 0,
+          gst_status: q.customer_gstin ? 'ACTIVE' : 'UNREGISTERED',
+          created_at: '',
+          updated_at: '',
+          sync_status: 'PENDING',
+        };
+        setSelectedCustomer(custObj);
+        setSelectedCustomerId(custObj.id);
+      }
+
+      // 2. Set Bill Type
+      const isGst = q.tax_type !== 'NON_GST';
+      setBillType(isGst ? 'GST_INVOICE' : 'SIMPLE_BILL');
+
+      // 3. Map line items to BillLineItem using FEFO / matched inventory batches
+      const isInter = q.tax_type === 'INTER_STATE';
+      const newItems: BillLineItem[] = [];
+
+      for (let i = 0; i < qItems.length; i++) {
+        const it = qItems[i];
+        // Match batch in stock
+        const medBatches = allBatches.filter(
+          (b) => b.medicine_id === it.medicine_id || (b.medicine_name && b.medicine_name.toUpperCase() === it.product_name.toUpperCase())
+        );
+        const batch =
+          medBatches.find((b) => b.batch_no === it.batch_no) ||
+          (medBatches.length > 0 ? medBatches[0] : null);
+
+        const row = calculateRowMath(
+          {
+            medicine_id: it.medicine_id,
+            batch_id: batch ? batch.id : it.batch_id || '',
+            product_name: it.product_name,
+            hsn_code: it.hsn_code || '3004',
+            pack_size: it.pack_size || '',
+            mfg_by: it.mfg_by || '',
+            batch_no: batch ? batch.batch_no : it.batch_no || 'TBD',
+            exp_date_mm_yy: batch ? batch.exp_date_mm_yy : it.exp_date_mm_yy || '',
+            available_qty: batch ? batch.available_qty : it.available_qty || 0,
+            qty: it.qty,
+            free_qty: it.free_qty || 0,
+            mrp: batch ? batch.mrp : it.mrp,
+            net_landing_cost: batch ? batch.net_landing_cost : it.sale_rate * 0.8,
+            sale_rate: it.sale_rate,
+            discount_percent: it.discount_percent || 0,
+            gst_percent: it.gst_percent,
+          },
+          isGst,
+          isInter
+        );
+        newItems.push(row);
+      }
+
+      if (newItems.length > 0) {
+        setItems(newItems);
+      }
+      setConvertedQuotationId(q.id);
+      setQuotationPickerOpen(false);
+    } catch (err: any) {
+      alert(`Failed to load quotation: ${err.message}`);
+    }
+  };
+
+  // Open Load Quotation Modal
+  const handleOpenLoadQuotationModal = async () => {
+    try {
+      const pending = await dbService.getQuotations('PENDING');
+      setPendingQuotations(pending);
+      setQuotationPickerOpen(true);
+    } catch (err: any) {
+      alert(`Failed to fetch pending quotations: ${err.message}`);
+    }
+  };
+
+  // Save current cart as Quotation (Zero Stock Deduction)
+  const handleSaveAsQuotation = async () => {
+    if (!selectedCustomer) {
+      alert('Please select a customer first.');
+      return;
+    }
+
+    const validItems = items.filter((it) => it.product_name && it.qty > 0);
+    if (validItems.length === 0) {
+      alert('Please add at least one medicine with quantity greater than zero.');
+      return;
+    }
+
+    try {
+      const nextQuoteNo = await dbService.getNextQuotationNo();
+      const quoteId = `QT_${Date.now()}`;
+      const nowIso = new Date().toISOString().replace('T', ' ').substring(0, 19);
+      const validUntil = new Date();
+      validUntil.setDate(validUntil.getDate() + 15);
+
+      const quotation: Quotation = {
+        id: quoteId,
+        quotation_no: nextQuoteNo,
+        quotation_date: invoiceDate,
+        valid_until_date: validUntil.toISOString().substring(0, 10),
+        customer_id: selectedCustomer.id,
+        customer_name: selectedCustomer.name,
+        customer_phone: selectedCustomer.phone || '',
+        customer_gstin: selectedCustomer.gstin || '',
+        customer_dl_no: selectedCustomer.dl_no || '',
+        customer_address: `${selectedCustomer.address || ''}, ${selectedCustomer.city || ''}`.trim(),
+        tax_type: billType === 'SIMPLE_BILL' ? 'NON_GST' : isInterState ? 'INTER_STATE' : 'INTRA_STATE',
+        sub_total: subTotal,
+        bill_discount_amount: billDiscountAmount,
+        other_adjustment: otherAdjustment,
+        total_cgst: totalCgst,
+        total_sgst: totalSgst,
+        total_igst: totalIgst,
+        total_gst: totalGst,
+        round_off: roundOff,
+        net_amount: netAmount,
+        status: 'PENDING',
+        notes: 'Saved from Wholesale Sales Billing cart',
+        created_at: nowIso,
+        updated_at: nowIso,
+        sync_status: 'PENDING',
+      };
+
+      const quoteItems: QuotationItem[] = validItems.map((it, idx) => ({
+        id: `QTI_${quoteId}_${idx}`,
+        quotation_id: quoteId,
+        medicine_id: it.medicine_id,
+        batch_id: it.batch_id,
+        product_name: it.product_name,
+        hsn_code: it.hsn_code,
+        pack_size: it.pack_size,
+        mfg_by: it.mfg_by,
+        batch_no: it.batch_no || 'TBD',
+        exp_date_mm_yy: it.exp_date_mm_yy,
+        available_qty: it.available_qty,
+        qty: it.qty,
+        free_qty: it.free_qty,
+        mrp: it.mrp,
+        sale_rate: it.sale_rate,
+        discount_percent: it.discount_percent,
+        taxable_amount: it.taxable_amount,
+        gst_percent: it.gst_percent,
+        cgst_percent: it.cgst_percent,
+        cgst_amount: it.cgst_amount,
+        sgst_percent: it.sgst_percent,
+        sgst_amount: it.sgst_amount,
+        igst_percent: it.igst_percent,
+        igst_amount: it.igst_amount,
+        line_total: it.line_total,
+      }));
+
+      await dbService.saveQuotation(quotation, quoteItems);
+      alert(
+        `✅ Successfully saved as Quotation #${nextQuoteNo}!\n\n` +
+        `Customer: ${selectedCustomer.name}\n` +
+        `Estimated Total: ₹${netAmount.toFixed(2)}\n\n` +
+        `NOTE: Physical inventory stock has NOT been deducted.`
+      );
+    } catch (err: any) {
+      alert(`Failed to save quotation: ${err.message}`);
+    }
+  };
+
+  // Auto-load if initialQuotation was passed in props
+  useEffect(() => {
+    if (initialQuotation && allBatches.length > 0 && customers.length > 0) {
+      loadQuotationIntoBill(initialQuotation);
+    }
+  }, [initialQuotation, allBatches.length, customers.length]);
 
   // Ensure at least 1 clean row on start
   useEffect(() => {
@@ -553,6 +765,12 @@ export const SalesBillingPage: React.FC<SalesBillingPageProps> = ({
       // Execute Atomic Database Transaction
       await dbService.saveSaleTransaction(saleHeader, saleItemRows);
 
+      // If converted from a quotation, mark it converted
+      if (convertedQuotationId) {
+        await dbService.markQuotationConverted(convertedQuotationId, saleId, invoiceNo);
+        setConvertedQuotationId(null);
+      }
+
       // Open Print Modal Immediately
       setSavedSaleForPrint(saleHeader);
       setSavedItemsForPrint(saleItemRows);
@@ -635,8 +853,40 @@ export const SalesBillingPage: React.FC<SalesBillingPageProps> = ({
               <FileText className="w-3.5 h-3.5" />
               <span>Recent Bills ({recentSales.length})</span>
             </button>
+
+            <button
+              type="button"
+              onClick={handleOpenLoadQuotationModal}
+              className="px-3 py-1 bg-amber-600 hover:bg-amber-500 text-white font-bold rounded-sm flex items-center space-x-1 shadow-sm"
+              title="Load / Convert Pending Quotation (Alt+Q)"
+            >
+              <FileSpreadsheet className="w-3.5 h-3.5" />
+              <span>Load Quotation [Alt+Q]</span>
+            </button>
           </div>
         </div>
+
+        {/* Banner if converting from quotation */}
+        {convertedQuotationId && (
+          <div className="mt-2 p-2 bg-amber-50 dark:bg-amber-950/60 border border-amber-300 dark:border-amber-700 rounded-sm flex items-center justify-between text-xs">
+            <div className="flex items-center space-x-2">
+              <FileSpreadsheet className="w-4 h-4 text-amber-600" />
+              <span className="font-extrabold text-amber-900 dark:text-amber-300">
+                Converting Quotation [{convertedQuotationId}] into Sale Bill.
+              </span>
+              <span className="text-slate-600 dark:text-slate-400">
+                Saving will mark quote as CONVERTED and deduct stock.
+              </span>
+            </div>
+            <button
+              type="button"
+              onClick={() => setConvertedQuotationId(null)}
+              className="text-[11px] text-slate-500 hover:text-slate-800 dark:hover:text-white underline font-bold"
+            >
+              Detach Quote
+            </button>
+          </div>
+        )}
 
         {/* Customer Selection Row */}
         <div className="mt-3 pt-3 border-t border-slate-200 dark:border-slate-800 flex flex-wrap items-center justify-between gap-3 text-xs">
@@ -1021,6 +1271,17 @@ export const SalesBillingPage: React.FC<SalesBillingPageProps> = ({
             </div>
           </div>
 
+          {/* Save as Quotation (Zero Stock Deduction) */}
+          <button
+            type="button"
+            onClick={handleSaveAsQuotation}
+            className="px-4 py-2.5 bg-amber-600 hover:bg-amber-500 text-white font-extrabold text-xs rounded-sm shadow-sm flex items-center space-x-1.5 transition-all"
+            title="Save current cart as a rate estimate without deducting stock"
+          >
+            <FileSpreadsheet className="w-4 h-4" />
+            <span>Save as Quotation</span>
+          </button>
+
           {/* Save & Print [F10] */}
           <button
             type="button"
@@ -1151,6 +1412,78 @@ export const SalesBillingPage: React.FC<SalesBillingPageProps> = ({
                             className="px-2.5 py-1 bg-rose-600 hover:bg-rose-500 text-white font-bold text-[11px] rounded-sm shadow-sm"
                           >
                             Cancel / Delete
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Load Quotation Modal [Alt+Q] */}
+      {quotationPickerOpen && (
+        <div className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-4">
+          <div className="bg-white dark:bg-slate-900 border-2 border-slate-700 w-full max-w-4xl shadow-2xl rounded-sm flex flex-col max-h-[85vh]">
+            <div className="p-3 bg-slate-100 dark:bg-slate-800 border-b border-slate-300 dark:border-slate-700 flex items-center justify-between">
+              <div>
+                <h2 className="text-base font-black text-slate-900 dark:text-white uppercase tracking-wide flex items-center space-x-2">
+                  <FileSpreadsheet className="w-5 h-5 text-amber-500" />
+                  <span>Load Pending Quotation Into Bill [Alt+Q]</span>
+                </h2>
+                <p className="text-xs text-slate-500">
+                  Select any pending quote to transfer its customer and item lines into your current billing session
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setQuotationPickerOpen(false)}
+                className="px-3 py-1 bg-slate-200 dark:bg-slate-700 hover:bg-slate-300 text-slate-800 dark:text-slate-200 text-xs font-bold rounded-sm"
+              >
+                Close [Esc]
+              </button>
+            </div>
+
+            <div className="p-3 overflow-y-auto flex-1">
+              {pendingQuotations.length === 0 ? (
+                <div className="p-8 text-center text-slate-500 text-xs">
+                  <FileSpreadsheet className="w-8 h-8 text-slate-300 dark:text-slate-700 mx-auto mb-2" />
+                  No pending quotations available to load.
+                </div>
+              ) : (
+                <table className="w-full text-left border-collapse text-xs table-dense">
+                  <thead>
+                    <tr className="bg-slate-100 dark:bg-slate-800 font-extrabold uppercase text-slate-700 dark:text-slate-300">
+                      <th>#</th>
+                      <th>Quote No</th>
+                      <th>Date</th>
+                      <th>Valid Until</th>
+                      <th>Customer</th>
+                      <th className="text-right">Est. Total</th>
+                      <th className="text-center">Action</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-200 dark:divide-slate-800">
+                    {pendingQuotations.map((q, idx) => (
+                      <tr key={q.id} className="hover:bg-slate-50 dark:hover:bg-slate-800/40">
+                        <td className="text-center font-mono text-slate-400">{idx + 1}</td>
+                        <td className="font-mono font-bold text-sky-700 dark:text-sky-300">{q.quotation_no}</td>
+                        <td className="font-mono">{q.quotation_date}</td>
+                        <td className="font-mono text-slate-500">{q.valid_until_date || '-'}</td>
+                        <td className="font-bold uppercase">{q.customer_name}</td>
+                        <td className="text-right font-mono font-bold text-slate-900 dark:text-white">
+                          ₹{q.net_amount.toFixed(2)}
+                        </td>
+                        <td className="text-center">
+                          <button
+                            type="button"
+                            onClick={() => loadQuotationIntoBill(q)}
+                            className="px-3 py-1 bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-[11px] rounded-sm shadow-sm flex items-center space-x-1 mx-auto"
+                          >
+                            <span>Load into Bill</span>
                           </button>
                         </td>
                       </tr>

@@ -15,6 +15,9 @@ import {
   ReturnAdjustment,
   PartyLedgerTransaction,
   CustomerRateMemory,
+  Quotation,
+  QuotationItem,
+  QuotationStatus,
 } from './schema';
 import {
   SEED_COMPANY_PROFILE,
@@ -164,6 +167,7 @@ export class DatabaseService {
         try {
           this.db = new SQL.Database(savedBinary);
           console.log('✅ SQLite loaded from persistent IndexedDB (V2)');
+          this.migrateDatabase();
         } catch (e) {
           console.error('Failed to parse saved DB binary, creating fresh', e);
           this.db = new SQL.Database();
@@ -182,6 +186,101 @@ export class DatabaseService {
     }
   }
 
+  // Safe incremental schema migration
+  private migrateDatabase() {
+    if (!this.db) return;
+    try {
+      // 1. Ensure quotations and quotation_items tables exist
+      this.db.exec(`
+        CREATE TABLE IF NOT EXISTS quotations (
+          id TEXT PRIMARY KEY,
+          quotation_no TEXT NOT NULL UNIQUE,
+          quotation_date TEXT NOT NULL,
+          valid_until_date TEXT,
+          customer_id TEXT NOT NULL,
+          customer_name TEXT NOT NULL,
+          customer_phone TEXT,
+          customer_gstin TEXT,
+          customer_dl_no TEXT,
+          customer_address TEXT,
+          tax_type TEXT NOT NULL,
+          sub_total REAL NOT NULL,
+          bill_discount_amount REAL DEFAULT 0,
+          other_adjustment REAL DEFAULT 0,
+          total_cgst REAL DEFAULT 0,
+          total_sgst REAL DEFAULT 0,
+          total_igst REAL DEFAULT 0,
+          total_gst REAL DEFAULT 0,
+          round_off REAL DEFAULT 0,
+          net_amount REAL NOT NULL,
+          status TEXT DEFAULT 'PENDING',
+          converted_sale_id TEXT,
+          converted_invoice_no TEXT,
+          notes TEXT,
+          terms_conditions TEXT,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL,
+          sync_status TEXT DEFAULT 'PENDING'
+        );
+
+        CREATE TABLE IF NOT EXISTS quotation_items (
+          id TEXT PRIMARY KEY,
+          quotation_id TEXT NOT NULL REFERENCES quotations(id) ON DELETE CASCADE,
+          medicine_id TEXT NOT NULL,
+          batch_id TEXT,
+          product_name TEXT NOT NULL,
+          hsn_code TEXT,
+          pack_size TEXT,
+          mfg_by TEXT,
+          batch_no TEXT,
+          exp_date_mm_yy TEXT,
+          available_qty INTEGER DEFAULT 0,
+          qty INTEGER NOT NULL,
+          free_qty INTEGER DEFAULT 0,
+          mrp REAL NOT NULL,
+          sale_rate REAL NOT NULL,
+          discount_percent REAL DEFAULT 0,
+          taxable_amount REAL NOT NULL,
+          gst_percent REAL NOT NULL,
+          cgst_percent REAL DEFAULT 0,
+          cgst_amount REAL DEFAULT 0,
+          sgst_percent REAL DEFAULT 0,
+          sgst_amount REAL DEFAULT 0,
+          igst_percent REAL DEFAULT 0,
+          igst_amount REAL DEFAULT 0,
+          line_total REAL NOT NULL
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_quotations_cust ON quotations(customer_id, quotation_date);
+        CREATE INDEX IF NOT EXISTS idx_quotations_status ON quotations(status);
+      `);
+
+      // 2. Safely add quotation prefix/next_no columns to company_profile if missing
+      try {
+        this.db.exec(`ALTER TABLE company_profile ADD COLUMN quotation_prefix TEXT DEFAULT 'QT';`);
+      } catch (e) {
+        // Column may already exist
+      }
+      try {
+        this.db.exec(`ALTER TABLE company_profile ADD COLUMN quotation_next_no INTEGER DEFAULT 101;`);
+      } catch (e) {
+        // Column may already exist
+      }
+
+      this.db.exec(`
+        UPDATE company_profile 
+        SET quotation_prefix = 'QT' 
+        WHERE quotation_prefix IS NULL OR quotation_prefix = '';
+        
+        UPDATE company_profile 
+        SET quotation_next_no = 101 
+        WHERE quotation_next_no IS NULL OR quotation_next_no = 0;
+      `);
+    } catch (err) {
+      console.error('Migration error:', err);
+    }
+  }
+
   // Save current SQLite binary to persistent storage
   async saveToStorage(): Promise<void> {
     if (!this.db) return;
@@ -197,6 +296,7 @@ export class DatabaseService {
     if (!this.db) return;
     this.db.exec(SQL_SCHEMA_DDL);
     this.seedDatabase();
+    this.migrateDatabase();
   }
 
   // Seed with official Radha Drugs company profile and standard generic medicine dictionary (0 stock)
@@ -211,8 +311,8 @@ export class DatabaseService {
           id, company_name, tagline, address_line1, city_district, state_name, state_code,
           pincode, phone, gstin, dl_no, dl_valid_upto, fssai_no, bank_name, bank_account_no,
           bank_ifsc, upi_id, gst_invoice_prefix, gst_invoice_next_no, simple_bill_prefix,
-          simple_bill_next_no, financial_year, terms_conditions
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          simple_bill_next_no, quotation_prefix, quotation_next_no, financial_year, terms_conditions
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [
           SEED_COMPANY_PROFILE.id,
           SEED_COMPANY_PROFILE.company_name,
@@ -235,6 +335,8 @@ export class DatabaseService {
           SEED_COMPANY_PROFILE.gst_invoice_next_no,
           SEED_COMPANY_PROFILE.simple_bill_prefix,
           SEED_COMPANY_PROFILE.simple_bill_next_no,
+          SEED_COMPANY_PROFILE.quotation_prefix || 'QT',
+          SEED_COMPANY_PROFILE.quotation_next_no || 101,
           SEED_COMPANY_PROFILE.financial_year,
           SEED_COMPANY_PROFILE.terms_conditions,
         ]
@@ -268,6 +370,8 @@ export class DatabaseService {
     db.exec('BEGIN TRANSACTION;');
     try {
       db.exec(`
+        DELETE FROM quotation_items;
+        DELETE FROM quotations;
         DELETE FROM sale_items;
         DELETE FROM sales;
         DELETE FROM purchase_items;
@@ -284,7 +388,8 @@ export class DatabaseService {
       this.safeRun(
         `UPDATE company_profile SET
           gst_invoice_next_no = 1157,
-          simple_bill_next_no = 101
+          simple_bill_next_no = 101,
+          quotation_next_no = 101
         WHERE id = 'RADHA_DRUGS_MAIN'`
       );
 
@@ -1221,6 +1326,205 @@ export class DatabaseService {
     this.notifyChange();
   }
 
+  // =========================================================================
+  // 6. QUOTATIONS & RATE ESTIMATES (STRICT ZERO INVENTORY IMPACT)
+  // =========================================================================
+
+  // Get next quotation number formatted as QT000101
+  async getNextQuotationNo(): Promise<string> {
+    const profs = await this.query<CompanyProfile>("SELECT quotation_prefix, quotation_next_no FROM company_profile WHERE id = 'RADHA_DRUGS_MAIN'");
+    if (profs.length > 0) {
+      const p = profs[0];
+      const prefix = p.quotation_prefix || 'QT';
+      const nextNo = p.quotation_next_no || 101;
+      return `${prefix}${String(nextNo).padStart(6, '0')}`;
+    }
+    return `QT000101`;
+  }
+
+  // Save or Update Quotation
+  // GUARANTEE: Does NOT deduct inventory_batches and does NOT touch party ledger
+  async saveQuotation(quotation: Quotation, items: QuotationItem[]): Promise<void> {
+    const db = await this.getDb();
+    db.exec('BEGIN TRANSACTION;');
+    try {
+      const existing = await this.query<{ id: string }>(
+        'SELECT id FROM quotations WHERE id = ?',
+        [quotation.id]
+      );
+      const isNew = existing.length === 0;
+
+      // 1. Insert or update quotation header
+      this.safeRun(
+        `INSERT OR REPLACE INTO quotations (
+          id, quotation_no, quotation_date, valid_until_date, customer_id, customer_name,
+          customer_phone, customer_gstin, customer_dl_no, customer_address, tax_type,
+          sub_total, bill_discount_amount, other_adjustment, total_cgst, total_sgst,
+          total_igst, total_gst, round_off, net_amount, status, converted_sale_id,
+          converted_invoice_no, notes, terms_conditions, created_at, updated_at, sync_status
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [
+          quotation.id,
+          quotation.quotation_no,
+          quotation.quotation_date,
+          quotation.valid_until_date,
+          quotation.customer_id,
+          quotation.customer_name,
+          quotation.customer_phone,
+          quotation.customer_gstin,
+          quotation.customer_dl_no,
+          quotation.customer_address,
+          quotation.tax_type,
+          quotation.sub_total,
+          quotation.bill_discount_amount || 0,
+          quotation.other_adjustment || 0,
+          quotation.total_cgst || 0,
+          quotation.total_sgst || 0,
+          quotation.total_igst || 0,
+          quotation.total_gst || 0,
+          quotation.round_off || 0,
+          quotation.net_amount,
+          quotation.status || 'PENDING',
+          quotation.converted_sale_id,
+          quotation.converted_invoice_no,
+          quotation.notes,
+          quotation.terms_conditions,
+          quotation.created_at,
+          quotation.updated_at,
+          quotation.sync_status || 'PENDING',
+        ]
+      );
+
+      // 2. Replace quotation items
+      this.safeRun('DELETE FROM quotation_items WHERE quotation_id = ?', [quotation.id]);
+
+      for (let i = 0; i < items.length; i++) {
+        const item = items[i];
+        const itemId = item.id || `QTI_${Date.now()}_${i}`;
+        this.safeRun(
+          `INSERT INTO quotation_items (
+            id, quotation_id, medicine_id, batch_id, product_name, hsn_code,
+            pack_size, mfg_by, batch_no, exp_date_mm_yy, available_qty, qty,
+            free_qty, mrp, sale_rate, discount_percent, taxable_amount,
+            gst_percent, cgst_percent, cgst_amount, sgst_percent, sgst_amount,
+            igst_percent, igst_amount, line_total
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          [
+            itemId,
+            quotation.id,
+            item.medicine_id,
+            item.batch_id,
+            item.product_name,
+            item.hsn_code,
+            item.pack_size,
+            item.mfg_by,
+            item.batch_no,
+            item.exp_date_mm_yy,
+            item.available_qty || 0,
+            item.qty,
+            item.free_qty || 0,
+            item.mrp,
+            item.sale_rate,
+            item.discount_percent || 0,
+            item.taxable_amount,
+            item.gst_percent,
+            item.cgst_percent || 0,
+            item.cgst_amount || 0,
+            item.sgst_percent || 0,
+            item.sgst_amount || 0,
+            item.igst_percent || 0,
+            item.igst_amount || 0,
+            item.line_total,
+          ]
+        );
+      }
+
+      // 3. Increment quotation sequence counter if it was a new quotation
+      if (isNew) {
+        this.safeRun(
+          `UPDATE company_profile SET quotation_next_no = quotation_next_no + 1 WHERE id = 'RADHA_DRUGS_MAIN'`
+        );
+      }
+
+      db.exec('COMMIT;');
+      this.notifyChange();
+    } catch (err) {
+      db.exec('ROLLBACK;');
+      throw err;
+    }
+  }
+
+  // Get quotations with optional status filter and search query
+  async getQuotations(statusFilter?: string, query?: string): Promise<Quotation[]> {
+    let sql = `SELECT * FROM quotations WHERE 1=1`;
+    const params: any[] = [];
+
+    if (statusFilter && statusFilter !== 'ALL') {
+      sql += ` AND status = ?`;
+      params.push(statusFilter);
+    }
+
+    if (query && query.trim()) {
+      const q = `%${query.trim().toUpperCase()}%`;
+      sql += ` AND (UPPER(quotation_no) LIKE ? OR UPPER(customer_name) LIKE ? OR customer_phone LIKE ? OR UPPER(customer_gstin) LIKE ?)`;
+      params.push(q, q, q, q);
+    }
+
+    sql += ` ORDER BY quotation_date DESC, created_at DESC`;
+    return this.query<Quotation>(sql, params);
+  }
+
+  // Get single quotation with items
+  async getQuotationById(id: string): Promise<{ quotation: Quotation; items: QuotationItem[] } | null> {
+    const quotes = await this.query<Quotation>('SELECT * FROM quotations WHERE id = ?', [id]);
+    if (quotes.length === 0) return null;
+    const items = await this.query<QuotationItem>(
+      'SELECT * FROM quotation_items WHERE quotation_id = ? ORDER BY rowid ASC',
+      [id]
+    );
+    return { quotation: quotes[0], items };
+  }
+
+  // Delete a quotation
+  async deleteQuotation(id: string): Promise<void> {
+    const db = await this.getDb();
+    db.exec('BEGIN TRANSACTION;');
+    try {
+      this.safeRun('DELETE FROM quotation_items WHERE quotation_id = ?', [id]);
+      this.safeRun('DELETE FROM quotations WHERE id = ?', [id]);
+      db.exec('COMMIT;');
+      this.notifyChange();
+    } catch (err) {
+      db.exec('ROLLBACK;');
+      throw err;
+    }
+  }
+
+  // Update Quotation Status
+  async updateQuotationStatus(quotationId: string, status: QuotationStatus): Promise<void> {
+    const now = new Date().toISOString().replace('T', ' ').substring(0, 19);
+    this.safeRun(
+      'UPDATE quotations SET status = ?, updated_at = ? WHERE id = ?',
+      [status, now, quotationId]
+    );
+    this.notifyChange();
+  }
+
+  // Mark Quotation Converted to Sale Bill
+  async markQuotationConverted(quotationId: string, saleId: string, invoiceNo: string): Promise<void> {
+    const now = new Date().toISOString().replace('T', ' ').substring(0, 19);
+    this.safeRun(
+      `UPDATE quotations SET
+        status = 'CONVERTED',
+        converted_sale_id = ?,
+        converted_invoice_no = ?,
+        updated_at = ?
+       WHERE id = ?`,
+      [saleId, invoiceNo, now, quotationId]
+    );
+    this.notifyChange();
+  }
+
   // Full JSON database backup
   async exportEntireDatabaseJson(): Promise<string> {
     const profile = await this.query('SELECT * FROM company_profile');
@@ -1234,6 +1538,8 @@ export class DatabaseService {
     const adjustments = await this.query('SELECT * FROM returns_adjustments');
     const ledger = await this.query('SELECT * FROM party_ledger_transactions');
     const customerRates = await this.query('SELECT * FROM customer_rate_memory');
+    const quotations = await this.query('SELECT * FROM quotations');
+    const quotationItems = await this.query('SELECT * FROM quotation_items');
 
     const backup = {
       exportTimestamp: new Date().toISOString(),
@@ -1250,7 +1556,9 @@ export class DatabaseService {
         saleItems,
         adjustments,
         ledger,
-        customerRates
+        customerRates,
+        quotations,
+        quotationItems
       }
     };
     return JSON.stringify(backup, null, 2);
@@ -1265,6 +1573,7 @@ export class DatabaseService {
     db.exec('BEGIN TRANSACTION;');
     try {
       const tables = [
+        'quotation_items', 'quotations',
         'purchase_items', 'sale_items', 'purchases', 'sales',
         'returns_adjustments', 'party_ledger_transactions',
         'customer_rate_memory', 'inventory_batches', 'medicines_master',
@@ -1277,7 +1586,9 @@ export class DatabaseService {
       const d = backup.data;
       if (d.profile) {
         for (const p of d.profile) {
-          this.safeRun(`INSERT OR REPLACE INTO company_profile VALUES (${Object.keys(p).map(() => '?').join(',')})`, Object.values(p));
+          const cols = Object.keys(p).join(', ');
+          const placeholders = Object.keys(p).map(() => '?').join(', ');
+          this.safeRun(`INSERT OR REPLACE INTO company_profile (${cols}) VALUES (${placeholders})`, Object.values(p));
         }
       }
       if (d.parties) {
@@ -1352,6 +1663,20 @@ export class DatabaseService {
       if (d.customerRates) {
         for (const cr of d.customerRates) {
           this.safeRun(`INSERT OR REPLACE INTO customer_rate_memory VALUES (${Object.keys(cr).map(() => '?').join(',')})`, Object.values(cr));
+        }
+      }
+      if (d.quotations) {
+        for (const q of d.quotations) {
+          const cols = Object.keys(q).join(', ');
+          const placeholders = Object.keys(q).map(() => '?').join(', ');
+          this.safeRun(`INSERT OR REPLACE INTO quotations (${cols}) VALUES (${placeholders})`, Object.values(q));
+        }
+      }
+      if (d.quotationItems) {
+        for (const qi of d.quotationItems) {
+          const cols = Object.keys(qi).join(', ');
+          const placeholders = Object.keys(qi).map(() => '?').join(', ');
+          this.safeRun(`INSERT OR REPLACE INTO quotation_items (${cols}) VALUES (${placeholders})`, Object.values(qi));
         }
       }
 

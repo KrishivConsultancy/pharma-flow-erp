@@ -23,6 +23,8 @@ export interface CompanyProfile {
   gst_invoice_next_no: number;
   simple_bill_prefix: string;
   simple_bill_next_no: number;
+  quotation_prefix?: string;
+  quotation_next_no?: number;
   financial_year: string;
   terms_conditions: string; // JSON array of clauses
 }
@@ -214,6 +216,68 @@ export interface SaleItem {
   line_profit: number;
 }
 
+export type QuotationStatus = 'DRAFT' | 'PENDING' | 'CONVERTED' | 'EXPIRED' | 'CANCELLED';
+
+export interface Quotation {
+  id: string;
+  quotation_no: string;
+  quotation_date: string;
+  valid_until_date: string;
+  customer_id: string;
+  customer_name: string;
+  customer_phone?: string;
+  customer_gstin?: string;
+  customer_dl_no?: string;
+  customer_address?: string;
+  tax_type: TaxType; // 'INTRA_STATE' | 'INTER_STATE' | 'NON_GST'
+  sub_total: number;
+  bill_discount_amount: number;
+  other_adjustment: number;
+  total_cgst: number;
+  total_sgst: number;
+  total_igst: number;
+  total_gst: number;
+  round_off: number;
+  net_amount: number;
+  status: QuotationStatus;
+  converted_sale_id?: string;
+  converted_invoice_no?: string;
+  notes?: string;
+  terms_conditions?: string;
+  created_at: string;
+  updated_at: string;
+  sync_status: 'PENDING' | 'SYNCED';
+  items?: QuotationItem[];
+}
+
+export interface QuotationItem {
+  id: string;
+  quotation_id: string;
+  medicine_id: string;
+  batch_id?: string;
+  product_name: string;
+  hsn_code: string;
+  pack_size: string;
+  mfg_by: string;
+  batch_no?: string;
+  exp_date_mm_yy?: string;
+  available_qty: number;
+  qty: number;
+  free_qty: number;
+  mrp: number;
+  sale_rate: number;
+  discount_percent: number;
+  taxable_amount: number;
+  gst_percent: number;
+  cgst_percent: number;
+  cgst_amount: number;
+  sgst_percent: number;
+  sgst_amount: number;
+  igst_percent: number;
+  igst_amount: number;
+  line_total: number;
+}
+
 export type AdjustmentType =
   | 'SALES_RETURN_CREDIT_NOTE'
   | 'PURCHASE_RETURN_DEBIT_NOTE'
@@ -309,6 +373,8 @@ CREATE TABLE IF NOT EXISTS company_profile (
   gst_invoice_next_no INTEGER DEFAULT 1157,
   simple_bill_prefix TEXT DEFAULT 'S',
   simple_bill_next_no INTEGER DEFAULT 101,
+  quotation_prefix TEXT DEFAULT 'QT',
+  quotation_next_no INTEGER DEFAULT 101,
   financial_year TEXT DEFAULT '2026-27',
   terms_conditions TEXT
 );
@@ -530,6 +596,65 @@ CREATE TABLE IF NOT EXISTS sync_queue (
   error_message TEXT
 );
 
+CREATE TABLE IF NOT EXISTS quotations (
+  id TEXT PRIMARY KEY,
+  quotation_no TEXT NOT NULL UNIQUE,
+  quotation_date TEXT NOT NULL,
+  valid_until_date TEXT,
+  customer_id TEXT NOT NULL,
+  customer_name TEXT NOT NULL,
+  customer_phone TEXT,
+  customer_gstin TEXT,
+  customer_dl_no TEXT,
+  customer_address TEXT,
+  tax_type TEXT NOT NULL,
+  sub_total REAL NOT NULL,
+  bill_discount_amount REAL DEFAULT 0,
+  other_adjustment REAL DEFAULT 0,
+  total_cgst REAL DEFAULT 0,
+  total_sgst REAL DEFAULT 0,
+  total_igst REAL DEFAULT 0,
+  total_gst REAL DEFAULT 0,
+  round_off REAL DEFAULT 0,
+  net_amount REAL NOT NULL,
+  status TEXT DEFAULT 'PENDING',
+  converted_sale_id TEXT,
+  converted_invoice_no TEXT,
+  notes TEXT,
+  terms_conditions TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  sync_status TEXT DEFAULT 'PENDING'
+);
+
+CREATE TABLE IF NOT EXISTS quotation_items (
+  id TEXT PRIMARY KEY,
+  quotation_id TEXT NOT NULL REFERENCES quotations(id) ON DELETE CASCADE,
+  medicine_id TEXT NOT NULL,
+  batch_id TEXT,
+  product_name TEXT NOT NULL,
+  hsn_code TEXT,
+  pack_size TEXT,
+  mfg_by TEXT,
+  batch_no TEXT,
+  exp_date_mm_yy TEXT,
+  available_qty INTEGER DEFAULT 0,
+  qty INTEGER NOT NULL,
+  free_qty INTEGER DEFAULT 0,
+  mrp REAL NOT NULL,
+  sale_rate REAL NOT NULL,
+  discount_percent REAL DEFAULT 0,
+  taxable_amount REAL NOT NULL,
+  gst_percent REAL NOT NULL,
+  cgst_percent REAL DEFAULT 0,
+  cgst_amount REAL DEFAULT 0,
+  sgst_percent REAL DEFAULT 0,
+  sgst_amount REAL DEFAULT 0,
+  igst_percent REAL DEFAULT 0,
+  igst_amount REAL DEFAULT 0,
+  line_total REAL NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS app_settings (
   key TEXT PRIMARY KEY,
   value TEXT NOT NULL
@@ -540,4 +665,6 @@ CREATE INDEX IF NOT EXISTS idx_batches_exp ON inventory_batches(exp_date_iso);
 CREATE INDEX IF NOT EXISTS idx_ledger_party ON party_ledger_transactions(party_id, transaction_date);
 CREATE INDEX IF NOT EXISTS idx_sales_cust ON sales(customer_id, sale_date);
 CREATE INDEX IF NOT EXISTS idx_purchases_vend ON purchases(vendor_id, invoice_date);
+CREATE INDEX IF NOT EXISTS idx_quotations_cust ON quotations(customer_id, quotation_date);
+CREATE INDEX IF NOT EXISTS idx_quotations_status ON quotations(status);
 `;

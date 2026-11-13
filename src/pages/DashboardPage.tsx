@@ -18,6 +18,7 @@ import {
   ShieldAlert,
   ArrowRight,
   Package,
+  FileSpreadsheet,
 } from 'lucide-react';
 import { dbService } from '../db/databaseService';
 import { CompanyProfile, Sale, InventoryBatch, Party } from '../db/schema';
@@ -124,6 +125,13 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({ company, onNavigat
         </div>
 
         <div className="flex space-x-2">
+          <button
+            onClick={() => onNavigate('quotations')}
+            className="px-4 py-2 bg-amber-600 hover:bg-amber-500 text-white font-extrabold text-xs rounded-sm shadow-md flex items-center space-x-1.5"
+          >
+            <FileSpreadsheet className="w-4 h-4" />
+            <span>New Quotation [F9]</span>
+          </button>
           <button
             onClick={() => onNavigate('sales')}
             className="px-4 py-2 bg-sky-600 hover:bg-sky-500 text-white font-extrabold text-xs rounded-sm shadow-md flex items-center space-x-1.5"

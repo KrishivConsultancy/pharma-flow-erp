@@ -1,0 +1,19 @@
+{
+  "archive_source": "/Users/manvendrabisht/Downloads/EPWWGST.zip",
+  "extraction_date": "2026-11-11T00:30:38.800152",
+  "business_name": "RADHA DRUGS Wholesale Medicine Dealer",
+  "gstin": "10BRCPK8315G2Z7",
+  "financial_years": {
+    "R2425": "FY 2024-2025 (1060 sales invoices)",
+    "R2426": "FY 2025-2026 (1819 sales invoices)",
+    "R2427": "FY 2026-2027 (Active: 1188 sales invoices, 9191 line items, 3279 batches, 1412 medicines, 147 customers)"
+  },
+  "exported_locations": {
+    "raw_dbf": "/Users/manvendrabisht/Documents/Pharma Distributor/data/legacy_db/raw_dbf",
+    "downloads_copy": "/Users/manvendrabisht/Downloads/EPWWGST_extracted_db",
+    "sqlite_current": "/Users/manvendrabisht/Documents/Pharma Distributor/data/legacy_db/sqlite/radha_drugs_current_2026_2027.db",
+    "sqlite_all_years": "/Users/manvendrabisht/Documents/Pharma Distributor/data/legacy_db/sqlite/radha_drugs_all_years.db",
+    "csv_directory": "/Users/manvendrabisht/Documents/Pharma Distributor/data/legacy_db/csv",
+    "restore_json": "/Users/manvendrabisht/Documents/Pharma Distributor/data/legacy_db/json/radha_drugs_pharmaflow_restore.json"
+  }
+}

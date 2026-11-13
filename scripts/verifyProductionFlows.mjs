@@ -55,8 +55,8 @@ async function runVerification() {
       id, company_name, tagline, address_line1, city_district, state_name, state_code,
       pincode, phone, gstin, dl_no, dl_valid_upto, fssai_no, bank_name, bank_account_no,
       bank_ifsc, upi_id, gst_invoice_prefix, gst_invoice_next_no, simple_bill_prefix,
-      simple_bill_next_no, financial_year, terms_conditions
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      simple_bill_next_no, quotation_prefix, quotation_next_no, financial_year, terms_conditions
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       SEED_COMPANY_PROFILE.id, SEED_COMPANY_PROFILE.company_name, SEED_COMPANY_PROFILE.tagline,
       SEED_COMPANY_PROFILE.address_line1, SEED_COMPANY_PROFILE.city_district, SEED_COMPANY_PROFILE.state_name,
@@ -65,7 +65,10 @@ async function runVerification() {
       SEED_COMPANY_PROFILE.fssai_no, SEED_COMPANY_PROFILE.bank_name, SEED_COMPANY_PROFILE.bank_account_no,
       SEED_COMPANY_PROFILE.bank_ifsc, SEED_COMPANY_PROFILE.upi_id, SEED_COMPANY_PROFILE.gst_invoice_prefix,
       SEED_COMPANY_PROFILE.gst_invoice_next_no, SEED_COMPANY_PROFILE.simple_bill_prefix,
-      SEED_COMPANY_PROFILE.simple_bill_next_no, SEED_COMPANY_PROFILE.financial_year,
+      SEED_COMPANY_PROFILE.simple_bill_next_no,
+      SEED_COMPANY_PROFILE.quotation_prefix || 'QT',
+      SEED_COMPANY_PROFILE.quotation_next_no || 101,
+      SEED_COMPANY_PROFILE.financial_year,
       SEED_COMPANY_PROFILE.terms_conditions,
     ]
   );
@@ -320,9 +323,147 @@ async function runVerification() {
   assert(manualBatch.available_qty === 50 && manualBatch.batch_no === 'OPENING26', 'Opening stock batch recorded without purchase bill');
   console.log('✓ TEST 9 PASSED: Opening stock batch verified.\n');
 
-  // 10. Factory Reset to 0
-  console.log('TEST 10: Wipe & Factory Reset Database');
+  // 10. Quotation Creation: Strict Zero Inventory & Zero Ledger Impact
+  console.log('TEST 10: Quotation Creation (Strict Zero Stock & Ledger Impact)');
+  const quoteId = 'QUOTE_TEST_01';
+  const quoteNo = 'QT000101';
+  const stockBeforeQuote = query('SELECT available_qty FROM inventory_batches WHERE id = ?', [batchId])[0].available_qty;
+  const custBalanceBeforeQuote = query('SELECT current_balance FROM parties WHERE id = ?', [customerId])[0].current_balance;
+  const ledgerCountBeforeQuote = query('SELECT COUNT(*) as c FROM party_ledger_transactions WHERE party_id = ?', [customerId])[0].c;
+
+  // Insert quotation
+  run(
+    `INSERT INTO quotations (
+      id, quotation_no, quotation_date, valid_until_date, customer_id, customer_name,
+      customer_phone, customer_gstin, customer_dl_no, customer_address, tax_type,
+      sub_total, bill_discount_amount, other_adjustment, total_cgst, total_sgst,
+      total_igst, total_gst, round_off, net_amount, status, created_at, updated_at
+    ) VALUES (?, ?, '2026-04-06', '2026-04-21', ?, 'KHUSHI MEDICO',
+      '9835466285', '10ABCDE1234F1Z5', 'BEG-107086/87', 'MAIN ROAD, BEGUSARAI', 'INTRA_STATE',
+      450.0, 0, 0, 27.0, 27.0, 0, 54.0, 0, 504.0, 'PENDING', '2026-04-06 10:00:00', '2026-04-06 10:00:00')`,
+    [quoteId, quoteNo, customerId]
+  );
+
+  run(
+    `INSERT INTO quotation_items (
+      id, quotation_id, medicine_id, batch_id, product_name, hsn_code,
+      pack_size, mfg_by, batch_no, exp_date_mm_yy, available_qty, qty,
+      free_qty, mrp, sale_rate, discount_percent, taxable_amount,
+      gst_percent, cgst_percent, cgst_amount, sgst_percent, sgst_amount,
+      igst_percent, igst_amount, line_total
+    ) VALUES (
+      'QTI_01', ?, ?, ?, 'AZITHROMYCIN 500MG TAB', '30049099',
+      '10x3 Tab', 'Cipla Ltd', 'AZ2026B1', '06/28', 160, 15,
+      0, 45.0, 30.0, 0, 450.0,
+      12.0, 6.0, 27.0, 6.0, 27.0,
+      0, 0, 504.0
+    )`,
+    [quoteId, medId, batchId]
+  );
+
+  // Increment quotation sequence
+  run(`UPDATE company_profile SET quotation_next_no = quotation_next_no + 1 WHERE id = 'RADHA_DRUGS_MAIN'`);
+
+  // Assert ZERO stock deduction
+  const stockAfterQuote = query('SELECT available_qty FROM inventory_batches WHERE id = ?', [batchId])[0].available_qty;
+  assert(stockAfterQuote === stockBeforeQuote, `Batch stock completely untouched (${stockAfterQuote} units remaining)`);
+
+  // Assert ZERO party balance / ledger mutation
+  const custBalanceAfterQuote = query('SELECT current_balance FROM parties WHERE id = ?', [customerId])[0].current_balance;
+  const ledgerCountAfterQuote = query('SELECT COUNT(*) as c FROM party_ledger_transactions WHERE party_id = ?', [customerId])[0].c;
+  assert(custBalanceAfterQuote === custBalanceBeforeQuote, `Customer balance completely untouched (₹${custBalanceAfterQuote})`);
+  assert(ledgerCountAfterQuote === ledgerCountBeforeQuote, `No ledger transaction inserted for quotation`);
+
+  // Assert quotation status and sequence
+  const quoteRow = query('SELECT * FROM quotations WHERE id = ?', [quoteId])[0];
+  assert(quoteRow.status === 'PENDING' && quoteRow.net_amount === 504.0, 'Quotation record saved as PENDING with ₹504.0 net');
+  const profQuote = query('SELECT quotation_next_no FROM company_profile WHERE id = ?', ['RADHA_DRUGS_MAIN'])[0];
+  assert(profQuote.quotation_next_no === 102, 'Quotation next counter incremented to 102');
+  console.log('✓ TEST 10 PASSED: Strict Zero Inventory & Zero Ledger Impact verified.\n');
+
+  // 11. Convert Quotation to Sale Bill
+  console.log('TEST 11: 1-Click Quotation Conversion to Sale Bill');
+  const convSaleId = 'SALE_FROM_QUOTE_01';
+  const convInvoiceNo = 'T001158';
+
+  // Perform atomic sale from quote
+  run(
+    `INSERT INTO sales (
+      id, invoice_no, bill_type, sale_date, customer_id, tax_type,
+      customer_previous_balance, sub_total, bill_discount_amount, other_adjustment,
+      total_cgst, total_sgst, total_igst, total_gst, round_off, net_amount,
+      amount_received, payment_mode, total_cost_of_goods, net_profit, is_cancelled,
+      created_at, sync_status
+    ) VALUES (
+      ?, ?, 'GST_INVOICE', '2026-04-06', ?, 'INTRA_STATE',
+      0, 450.0, 0, 0,
+      27.0, 27.0, 0, 54.0, 0, 504.0,
+      0, 'CREDIT', 225.0, 225.0, 0,
+      '2026-04-06 11:00:00', 'PENDING'
+    )`,
+    [convSaleId, convInvoiceNo, customerId]
+  );
+
+  run(
+    `INSERT INTO sale_items (
+      id, sale_id, medicine_id, batch_id, product_name, hsn_code,
+      pack_size, mfg_by, batch_no, exp_date_mm_yy, qty, free_qty,
+      mrp, sale_rate, discount_percent, taxable_amount, gst_percent,
+      cgst_percent, cgst_amount, sgst_percent, sgst_amount, igst_percent,
+      igst_amount, line_total, net_landing_cost_snapshot, line_profit
+    ) VALUES (
+      'SITEM_CONV_01', ?, ?, ?, 'AZITHROMYCIN 500MG TAB', '30049099',
+      '10x3 Tab', 'Cipla Ltd', 'AZ2026B1', '06/28', 15, 0,
+      45.0, 30.0, 0, 450.0, 12.0,
+      6.0, 27.0, 6.0, 27.0, 0,
+      0, 504.0, 15.0, 225.0
+    )`,
+    [convSaleId, medId, batchId]
+  );
+
+  // Deduct stock upon conversion
+  run(`UPDATE inventory_batches SET available_qty = available_qty - 15 WHERE id = ?`, [batchId]);
+
+  // Debit customer ledger upon conversion
+  run(
+    `INSERT INTO party_ledger_transactions (
+      id, party_id, transaction_date, voucher_type, voucher_no, reference_id,
+      debit_amount, credit_amount, running_balance, payment_method, narration, created_at
+    ) VALUES ('LEDGER_CONV_01', ?, '2026-04-06', 'GST_TAX_INVOICE', ?, ?, 504.0, 0, 504.0, 'CREDIT', 'Converted from quote QT000101', '2026-04-06 11:00:00')`,
+    [customerId, convInvoiceNo, convSaleId]
+  );
+  run(`UPDATE parties SET current_balance = 504.0 WHERE id = ?`, [customerId]);
+
+  // Mark Quotation CONVERTED
+  run(
+    `UPDATE quotations SET
+      status = 'CONVERTED',
+      converted_sale_id = ?,
+      converted_invoice_no = ?,
+      updated_at = '2026-04-06 11:00:00'
+     WHERE id = ?`,
+    [convSaleId, convInvoiceNo, quoteId]
+  );
+
+  // Verify stock deducted upon bill conversion (160 - 15 = 145)
+  const stockAfterConv = query('SELECT available_qty FROM inventory_batches WHERE id = ?', [batchId])[0].available_qty;
+  assert(stockAfterConv === 145, `Stock properly deducted from 160 to 145 upon conversion (Actual: ${stockAfterConv})`);
+
+  // Verify customer balance debited
+  const custBalanceAfterConv = query('SELECT current_balance FROM parties WHERE id = ?', [customerId])[0].current_balance;
+  assert(custBalanceAfterConv === 504.0, `Customer balance debited by ₹504.0 upon conversion (Actual: ₹${custBalanceAfterConv})`);
+
+  // Verify quote marked CONVERTED
+  const quoteAfterConv = query('SELECT * FROM quotations WHERE id = ?', [quoteId])[0];
+  assert(quoteAfterConv.status === 'CONVERTED', 'Quotation status updated to CONVERTED');
+  assert(quoteAfterConv.converted_invoice_no === convInvoiceNo, `Quotation linked to invoice ${convInvoiceNo}`);
+  console.log('✓ TEST 11 PASSED: Quotation conversion to sale bill verified.\n');
+
+  // 12. Factory Reset to 0
+  console.log('TEST 12: Wipe & Factory Reset Database');
   db.exec(`
+    DELETE FROM quotation_items;
+    DELETE FROM quotations;
     DELETE FROM sale_items;
     DELETE FROM sales;
     DELETE FROM purchase_items;
@@ -335,26 +476,32 @@ async function runVerification() {
     DELETE FROM sync_queue;
     UPDATE company_profile SET
       gst_invoice_next_no = 1157,
-      simple_bill_next_no = 101
+      simple_bill_next_no = 101,
+      quotation_next_no = 101
     WHERE id = 'RADHA_DRUGS_MAIN';
   `);
 
+  const wipedQuotes = query('SELECT COUNT(*) as c FROM quotations')[0].c;
+  const wipedQuoteItems = query('SELECT COUNT(*) as c FROM quotation_items')[0].c;
   const wipedSales = query('SELECT COUNT(*) as c FROM sales')[0].c;
   const wipedPurchases = query('SELECT COUNT(*) as c FROM purchases')[0].c;
   const wipedBatches = query('SELECT COUNT(*) as c FROM inventory_batches')[0].c;
   const wipedParties = query('SELECT COUNT(*) as c FROM parties')[0].c;
-  const resetCompany = query('SELECT gst_invoice_next_no, simple_bill_next_no FROM company_profile WHERE id = ?', ['RADHA_DRUGS_MAIN'])[0];
+  const resetCompany = query('SELECT gst_invoice_next_no, simple_bill_next_no, quotation_next_no FROM company_profile WHERE id = ?', ['RADHA_DRUGS_MAIN'])[0];
 
+  assert(wipedQuotes === 0, 'Wiped quotations: 0');
+  assert(wipedQuoteItems === 0, 'Wiped quotation items: 0');
   assert(wipedSales === 0, 'Wiped sales: 0');
   assert(wipedPurchases === 0, 'Wiped purchases: 0');
   assert(wipedBatches === 0, 'Wiped batches: 0');
   assert(wipedParties === 0, 'Wiped parties: 0');
   assert(resetCompany.gst_invoice_next_no === 1157, 'GST invoice counter reset to 1157');
   assert(resetCompany.simple_bill_next_no === 101, 'Simple bill counter reset to 101');
-  console.log('✓ TEST 10 PASSED: Database wipe and factory reset verified.\n');
+  assert(resetCompany.quotation_next_no === 101, 'Quotation counter reset to 101');
+  console.log('✓ TEST 12 PASSED: Database wipe and factory reset verified.\n');
 
   console.log('====================================================');
-  console.log('  ALL 10 VERIFICATION TEST SUITES PASSED (100%)');
+  console.log('  ALL 12 VERIFICATION TEST SUITES PASSED (100%)');
   console.log('====================================================');
 }
 
