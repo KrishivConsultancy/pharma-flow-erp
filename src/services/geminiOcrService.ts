@@ -133,11 +133,13 @@ CRITICAL PHARMA EXTRACTION RULES:
 4. Accuracy: Return only items visible on the document. If a field is missing, use sensible defaults (hsn_code: "3004", discount_percent: 0).
 `;
 
+    const cleanKey = String(key || '').trim().replace(/^Bearer\s+/i, '');
+
     // 1. If running in Electron, use native IPC to bypass browser CORS completely
     const electronAPI = typeof window !== 'undefined' ? (window as any).electronAPI : null;
     if (electronAPI && typeof electronAPI.scanInvoiceGemini === 'function') {
       const ipcRes = await electronAPI.scanInvoiceGemini({
-        apiKey: key,
+        apiKey: cleanKey,
         base64Data: cleanBase64,
         mimeType,
         promptText,
@@ -151,12 +153,14 @@ CRITICAL PHARMA EXTRACTION RULES:
     }
 
     // 2. Direct fetch fallback (Web or Electron renderer with webSecurity: false)
-    const models = ['gemini-3.5-flash-lite', 'gemini-3.5-flash', 'gemini-3.8-flash', 'gemini-flash-latest'];
+    const models = ['gemini-2.5-flash', 'gemini-2.0-flash', 'gemini-1.5-flash', 'gemini-1.5-pro'];
     let lastError: Error | null = null;
 
     for (const model of models) {
       try {
-        const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${key}`;
+        const url = cleanKey.startsWith('AIza')
+          ? `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(cleanKey)}`
+          : `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`;
 
         const requestBody = {
           contents: [
@@ -179,7 +183,10 @@ CRITICAL PHARMA EXTRACTION RULES:
 
         const response = await fetch(url, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: {
+            'Content-Type': 'application/json',
+            'x-goog-api-key': cleanKey,
+          },
           body: JSON.stringify(requestBody),
         });
 

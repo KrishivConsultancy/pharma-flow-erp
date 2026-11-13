@@ -3,59 +3,103 @@
 @layer base {
   :root {
     --border-color: #cbd5e1;
-    --table-header-bg: #f1f5f9;
+    --border-subtle: #e2e8f0;
+    --table-header-bg: #f8fafc;
+    --card-bg: #ffffff;
+    --surface-hover: #f1f5f9;
   }
   .dark {
     --border-color: #334155;
-    --table-header-bg: #1e293b;
+    --border-subtle: #1e293b;
+    --table-header-bg: #0f172a;
+    --card-bg: #0f172a;
+    --surface-hover: #1e293b;
+  }
+
+  body {
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    font-feature-settings: 'cv02', 'cv03', 'cv04', 'cv11';
+    text-rendering: optimizeLegibility;
+  }
+}
+
+/* Tabular figures for exact alignment of currency and batch counts */
+.tabular-nums {
+  font-variant-numeric: tabular-nums;
+}
+
+/* Modern web guidance: Containment for complex layouts to eliminate INP lag */
+.contain-layout-unit {
+  content-visibility: auto;
+  contain-intrinsic-size: auto 300px auto 600px;
+}
+
+@supports not (content-visibility: auto) {
+  .contain-layout-unit {
+    contain: layout style paint;
   }
 }
 
 /* Dense enterprise data grids */
 .table-dense th {
-  padding: 6px 8px;
-  font-size: 13px;
-  font-weight: 700;
+  padding: 6px 10px;
+  font-size: 11px;
+  font-weight: 800;
   text-transform: uppercase;
-  letter-spacing: 0.03em;
-  border-bottom: 2px solid #94a3b8;
+  letter-spacing: 0.05em;
+  border-bottom: 2px solid var(--border-color);
   background-color: var(--table-header-bg);
   white-space: nowrap;
 }
 
 .table-dense td {
-  padding: 6px 8px;
-  font-size: 14px;
-  border-bottom: 1px solid var(--border-color);
+  padding: 7px 10px;
+  font-size: 12.5px;
+  border-bottom: 1px solid var(--border-subtle);
 }
 
 /* Custom crisp scrollbar */
 ::-webkit-scrollbar {
-  width: 8px;
-  height: 8px;
+  width: 6px;
+  height: 6px;
 }
 ::-webkit-scrollbar-track {
-  background: #f1f5f9;
+  background: transparent;
 }
 .dark ::-webkit-scrollbar-track {
-  background: #0f172a;
+  background: transparent;
 }
 ::-webkit-scrollbar-thumb {
-  background: #94a3b8;
-  border-radius: 2px;
+  background: #cbd5e1;
+  border-radius: 3px;
+}
+.dark ::-webkit-scrollbar-thumb {
+  background: #334155;
+  border-radius: 3px;
 }
 ::-webkit-scrollbar-thumb:hover {
-  background: #64748b;
+  background: #94a3b8;
+}
+.dark ::-webkit-scrollbar-thumb:hover {
+  background: #475569;
 }
 
-/* High contrast inputs */
+/* High contrast inputs & keyboard focus */
 input, select, textarea {
   border-radius: 2px;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
 }
-input:focus, select:focus, textarea:focus {
+input:focus-visible, select:focus-visible, textarea:focus-visible, button:focus-visible {
   outline: none;
   border-color: #0284c7 !important;
-  box-shadow: 0 0 0 1px #0284c7;
+  box-shadow: 0 0 0 2px rgba(2, 132, 199, 0.35);
+}
+
+/* Glass panel subtle backdrop */
+.glass-panel {
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
 }
 
 /* Print CSS */

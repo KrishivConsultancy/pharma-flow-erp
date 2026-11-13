@@ -1626,7 +1626,18 @@ export class DatabaseService {
         }
       }
       if (d.batches) {
+        // Deduplicate batches by (medicine_id, batch_no) to prevent UNIQUE constraint collisions
+        const seenBatches = new Map<string, any>();
         for (const b of d.batches) {
+          const key = `${b.medicine_id}__${String(b.batch_no || '').trim().toUpperCase()}`;
+          if (seenBatches.has(key)) {
+            const existing = seenBatches.get(key);
+            existing.available_qty = (existing.available_qty || 0) + (b.available_qty || 0);
+          } else {
+            seenBatches.set(key, { ...b });
+          }
+        }
+        for (const b of seenBatches.values()) {
           this.safeRun(`INSERT OR REPLACE INTO inventory_batches VALUES (${Object.keys(b).map(() => '?').join(',')})`, Object.values(b));
         }
       }

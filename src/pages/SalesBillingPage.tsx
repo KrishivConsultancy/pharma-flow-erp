@@ -976,8 +976,8 @@ export const SalesBillingPage: React.FC<SalesBillingPageProps> = ({
           </button>
         </div>
 
-        {/* Dense Data Grid Table */}
-        <div className="overflow-x-auto flex-1">
+        {/* Dense Data Grid Table with Layout Containment */}
+        <div className="overflow-x-auto flex-1 contain-layout-unit">
           <table className="w-full text-left border-collapse table-dense">
             <thead>
               <tr className="text-[11px] font-black uppercase text-slate-700 dark:text-slate-300">

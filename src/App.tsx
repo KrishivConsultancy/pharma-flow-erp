@@ -8,6 +8,7 @@ import { SEED_COMPANY_PROFILE } from './db/seedData';
 import { TopHeader } from './components/layout/TopHeader';
 import { Sidebar } from './components/layout/Sidebar';
 import { UpdaterBanner } from './components/layout/UpdaterBanner';
+import { CommandPaletteModal } from './components/layout/CommandPaletteModal';
 
 // Pages
 import { DashboardPage } from './pages/DashboardPage';
@@ -25,6 +26,7 @@ export const App: React.FC = () => {
   const [pageParams, setPageParams] = useState<any>({});
   const [company, setCompany] = useState<CompanyProfile>(SEED_COMPANY_PROFILE);
   const [isDbReady, setIsDbReady] = useState<boolean>(false);
+  const [isCommandPaletteOpen, setIsCommandPaletteOpen] = useState<boolean>(false);
   const [isDarkMode, setIsDarkMode] = useState<boolean>(() => {
     return localStorage.getItem('radha_theme') === 'dark';
   });
@@ -62,6 +64,13 @@ export const App: React.FC = () => {
   // Global Keyboard Shortcuts Router (F1 - F8)
   useEffect(() => {
     const handleGlobalFKeys = (e: KeyboardEvent) => {
+      // Global Command Palette Shortcut (Ctrl+K or Cmd+K)
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') {
+        e.preventDefault();
+        setIsCommandPaletteOpen((prev) => !prev);
+        return;
+      }
+
       // Avoid overriding inside normal text fields if they need F keys (though F1-F8 are generally safe)
       switch (e.key) {
         case 'F1':
@@ -135,6 +144,14 @@ export const App: React.FC = () => {
         onNavigate={handleNavigate}
         isDarkMode={isDarkMode}
         onToggleDarkMode={() => setIsDarkMode(!isDarkMode)}
+        onOpenCommandPalette={() => setIsCommandPaletteOpen(true)}
+      />
+
+      {/* Global Command Palette [Ctrl+K] */}
+      <CommandPaletteModal
+        isOpen={isCommandPaletteOpen}
+        onClose={() => setIsCommandPaletteOpen(false)}
+        onNavigate={handleNavigate}
       />
 
       {/* GitHub Native Auto-Updater Notification Banner */}

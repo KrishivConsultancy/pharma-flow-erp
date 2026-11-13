@@ -261,16 +261,22 @@ ipcMain.handle('lookup-gstin', async (event, { gstin, cashfreeClientId, cashfree
 
 // IPC: Gemini Vision Multimodal Invoice Scanner with Multi-Model Waterfall Fallback
 ipcMain.handle('scan-invoice-gemini', async (event, { apiKey, base64Data, mimeType, promptText }) => {
-  const key = apiKey || process.env.VITE_GEMINI_API_KEY || '';
-  if (!key) {
+  const rawKey = apiKey || process.env.VITE_GEMINI_API_KEY || '';
+  const cleanKey = String(rawKey || '').trim().replace(/^Bearer\s+/i, '');
+  if (!cleanKey) {
     return { ok: false, error: 'Gemini API Key is not set. Please paste your Gemini API Key in the scanner window or Settings.' };
   }
-  const models = ['gemini-3.5-flash-lite', 'gemini-3.5-flash', 'gemini-3.8-flash', 'gemini-flash-latest'];
+  // Modern production Gemini models supporting multimodal vision
+  const models = ['gemini-2.5-flash', 'gemini-2.0-flash', 'gemini-1.5-flash', 'gemini-1.5-pro'];
   let lastError = null;
 
   for (const model of models) {
     try {
-      const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${key}`;
+      // Modern AQ.* authorization keys require x-goog-api-key header and fail if passed in query param
+      // Legacy AIza* keys work with both header and query param
+      const url = cleanKey.startsWith('AIza')
+        ? `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(cleanKey)}`
+        : `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`;
 
       const requestBody = {
         contents: [
@@ -296,7 +302,10 @@ ipcMain.handle('scan-invoice-gemini', async (event, { apiKey, base64Data, mimeTy
 
       const response = await fetch(url, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          'x-goog-api-key': cleanKey,
+        },
         body: JSON.stringify(requestBody),
         signal: controller.signal,
       });

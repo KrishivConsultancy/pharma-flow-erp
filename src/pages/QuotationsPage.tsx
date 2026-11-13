@@ -930,7 +930,7 @@ export const QuotationsPage: React.FC<QuotationsPageProps> = ({
                 </span>
               </div>
 
-              <div className="border border-slate-300 dark:border-slate-700 rounded-sm overflow-x-auto">
+              <div className="border border-slate-300 dark:border-slate-700 rounded-sm overflow-x-auto contain-layout-unit">
                 <table className="w-full border-collapse text-left text-xs">
                   <thead>
                     <tr className="bg-slate-100 dark:bg-slate-800 font-extrabold uppercase text-slate-700 dark:text-slate-300 border-b border-slate-300 dark:border-slate-700">
