@@ -117,6 +117,16 @@ export class DatabaseService {
   private isInitializing = false;
   private initPromise: Promise<Database> | null = null;
   private changeListeners: Array<() => void> = [];
+  private saveDebounceTimer: any = null;
+  private notifyDebounceTimer: any = null;
+
+  constructor() {
+    if (typeof window !== 'undefined') {
+      window.addEventListener('beforeunload', () => {
+        this.saveToStorage();
+      });
+    }
+  }
 
   // Subscribe to reactive DB changes
   subscribe(listener: () => void) {
@@ -126,8 +136,34 @@ export class DatabaseService {
     };
   }
 
-  notifyChange() {
-    this.saveToStorage();
+  // Debounced save to IndexedDB: coalesces rapid writes into a single binary export after 600ms of idle
+  saveToStorageDebounced(): void {
+    if (this.saveDebounceTimer) {
+      clearTimeout(this.saveDebounceTimer);
+    }
+    this.saveDebounceTimer = setTimeout(() => {
+      this.saveToStorage();
+    }, 600);
+  }
+
+  // Reactive DB change notification with debounce
+  notifyChange(immediate = false) {
+    this.saveToStorageDebounced();
+
+    if (immediate) {
+      this.triggerListeners();
+      return;
+    }
+
+    if (this.notifyDebounceTimer) {
+      clearTimeout(this.notifyDebounceTimer);
+    }
+    this.notifyDebounceTimer = setTimeout(() => {
+      this.triggerListeners();
+    }, 80);
+  }
+
+  private triggerListeners() {
     if (typeof window !== 'undefined') {
       window.dispatchEvent(new CustomEvent('radha-db-changed'));
     }
@@ -279,10 +315,26 @@ export class DatabaseService {
     } catch (err) {
       console.error('Migration error:', err);
     }
+
+    try {
+      this.db.exec(`
+        CREATE INDEX IF NOT EXISTS idx_batches_avail ON inventory_batches(available_qty);
+        CREATE INDEX IF NOT EXISTS idx_batches_no ON inventory_batches(batch_no);
+        CREATE INDEX IF NOT EXISTS idx_parties_type ON parties(party_type);
+        CREATE INDEX IF NOT EXISTS idx_meds_name ON medicines_master(name);
+        CREATE INDEX IF NOT EXISTS idx_meds_barcode ON medicines_master(barcode_gtin);
+      `);
+    } catch (err) {
+      console.error('Index creation error:', err);
+    }
   }
 
-  // Save current SQLite binary to persistent storage
+  // Save current SQLite binary to persistent storage immediately
   async saveToStorage(): Promise<void> {
+    if (this.saveDebounceTimer) {
+      clearTimeout(this.saveDebounceTimer);
+      this.saveDebounceTimer = null;
+    }
     if (!this.db) return;
     try {
       const binary = this.db.export();
@@ -1251,7 +1303,8 @@ export class DatabaseService {
     const db = await this.getDb();
     const now = new Date().toISOString().replace('T', ' ').substring(0, 19);
     const id = party.id || `PARTY_${Date.now()}`;
-    const isNew = !party.id;
+    const existing = await this.query<{ id: string }>('SELECT id FROM parties WHERE id = ?', [id]);
+    const isNew = existing.length === 0;
 
     this.safeRun(
       `INSERT INTO parties (
@@ -1291,7 +1344,7 @@ export class DatabaseService {
         party.state_code || '10',
         party.opening_balance ?? 0,
         party.current_balance ?? party.opening_balance ?? 0,
-        party.credit_limit ?? 100000,
+        party.credit_limit ?? (party.party_type === 'VENDOR' ? 0 : 100000),
         party.gst_status || (party.gstin ? 'ACTIVE' : 'UNREGISTERED'),
         party.created_at || now,
         now,
@@ -1302,7 +1355,7 @@ export class DatabaseService {
     // If opening balance != 0 and party is new, record in ledger
     if (isNew && (party.opening_balance || 0) !== 0) {
       this.safeRun(
-        `INSERT INTO party_ledger_transactions (
+        `INSERT OR REPLACE INTO party_ledger_transactions (
           id, party_id, transaction_date, voucher_type, voucher_no, reference_id,
           debit_amount, credit_amount, running_balance, payment_method, narration, created_at
         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
@@ -1323,7 +1376,7 @@ export class DatabaseService {
       );
     }
 
-    this.notifyChange();
+    this.notifyChange(true);
   }
 
   // =========================================================================

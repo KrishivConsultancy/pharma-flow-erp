@@ -39,6 +39,7 @@ export const PartyFormModal: React.FC<PartyFormModalProps> = ({
   const [creditLimit, setCreditLimit] = useState<number>(defaultPartyType === 'VENDOR' ? 0 : 100000);
 
   const [isLoadingGstin, setIsLoadingGstin] = useState<boolean>(false);
+  const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
   const [gstinFeedback, setGstinFeedback] = useState<{ type: 'success' | 'error' | 'info'; message: string } | null>(null);
 
   const nameInputRef = useRef<HTMLInputElement>(null);
@@ -164,33 +165,36 @@ export const PartyFormModal: React.FC<PartyFormModalProps> = ({
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (isSubmitting) return;
+
     if (!name.trim()) {
       toast.error('Please enter party name / shop name.', { title: 'Party Name Required' });
       nameInputRef.current?.focus();
       return;
     }
 
-    const partyId = initialParty?.id || `PARTY_${Date.now()}`;
-    const partyData: Partial<Party> = {
-      id: partyId,
-      party_type: partyType,
-      is_gst_registered: isGstRegistered,
-      gstin: isGstRegistered ? gstin.toUpperCase().trim() : '',
-      name: name.toUpperCase().trim(),
-      legal_name: (legalName || name).toUpperCase().trim(),
-      dl_no: dlNo.trim(),
-      fssai_no: fssaiNo.trim(),
-      phone: phone.trim(),
-      address: address.toUpperCase().trim(),
-      city: (city || 'BEGUSARAI').toUpperCase().trim(),
-      state_name: stateName.toUpperCase().trim(),
-      state_code: stateCode.trim(),
-      opening_balance: Number(openingBalance) || 0,
-      credit_limit: isNaN(Number(creditLimit)) ? 0 : Number(creditLimit),
-      gst_status: isGstRegistered ? 'ACTIVE' : 'UNREGISTERED',
-    };
-
+    setIsSubmitting(true);
     try {
+      const partyId = initialParty?.id || `PARTY_${Date.now()}`;
+      const partyData: Partial<Party> = {
+        id: partyId,
+        party_type: partyType,
+        is_gst_registered: isGstRegistered,
+        gstin: isGstRegistered ? gstin.toUpperCase().trim() : '',
+        name: name.toUpperCase().trim(),
+        legal_name: (legalName || name).toUpperCase().trim(),
+        dl_no: dlNo.trim(),
+        fssai_no: fssaiNo.trim(),
+        phone: phone.trim(),
+        address: address.toUpperCase().trim(),
+        city: (city || 'BEGUSARAI').toUpperCase().trim(),
+        state_name: stateName.toUpperCase().trim(),
+        state_code: stateCode.trim(),
+        opening_balance: Number(openingBalance) || 0,
+        credit_limit: isNaN(Number(creditLimit)) ? 0 : Number(creditLimit),
+        gst_status: isGstRegistered ? 'ACTIVE' : 'UNREGISTERED',
+      };
+
       await dbService.upsertParty(partyData);
       toast.success(`${partyData.name} saved successfully!`);
       if (onSaved) {
@@ -199,6 +203,8 @@ export const PartyFormModal: React.FC<PartyFormModalProps> = ({
       onClose();
     } catch (err: any) {
       toast.error('Failed to save party: ' + err.message);
+    } finally {
+      setIsSubmitting(false);
     }
   };
 
@@ -512,16 +518,25 @@ export const PartyFormModal: React.FC<PartyFormModalProps> = ({
           <div className="flex justify-end space-x-3 pt-3 border-t border-slate-200 dark:border-slate-700">
             <button
               type="button"
+              disabled={isSubmitting}
               onClick={onClose}
-              className="px-4 py-2 border border-slate-300 dark:border-slate-600 text-slate-700 dark:text-slate-300 font-bold rounded-sm hover:bg-slate-100 dark:hover:bg-slate-800"
+              className="px-4 py-2 border border-slate-300 dark:border-slate-600 text-slate-700 dark:text-slate-300 font-bold rounded-sm hover:bg-slate-100 dark:hover:bg-slate-800 disabled:opacity-50 cursor-pointer"
             >
               Cancel
             </button>
             <button
               type="submit"
-              className="px-6 py-2 bg-sky-600 hover:bg-sky-500 text-white font-extrabold rounded-sm shadow-md"
+              disabled={isSubmitting}
+              className="px-6 py-2 bg-sky-600 hover:bg-sky-500 disabled:opacity-60 text-white font-extrabold rounded-sm shadow-md flex items-center space-x-2 cursor-pointer"
             >
-              {initialParty ? 'Save Changes' : 'Register Party'}
+              {isSubmitting ? (
+                <>
+                  <span className="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin"></span>
+                  <span>Saving Party...</span>
+                </>
+              ) : (
+                <span>{initialParty ? 'Save Changes' : 'Register Party'}</span>
+              )}
             </button>
           </div>
         </form>

@@ -3,7 +3,31 @@ const path = require('path');
 const fs = require('fs');
 const { autoUpdater } = require('electron-updater');
 
+// Global safety exception handlers
+process.on('uncaughtException', (err) => {
+  console.error('Uncaught Exception in Main Process:', err);
+});
+process.on('unhandledRejection', (reason, promise) => {
+  console.error('Unhandled Rejection in Main Process:', reason);
+});
+
+// Single Instance Lock: Prevents phantom background instances locking files on Windows
+const gotTheLock = app.requestSingleInstanceLock();
+
+if (!gotTheLock) {
+  console.warn('Another instance is already running. Exiting redundant process.');
+  app.quit();
+  process.exit(0);
+}
+
 let mainWindow;
+
+app.on('second-instance', () => {
+  if (mainWindow) {
+    if (mainWindow.isMinimized()) mainWindow.restore();
+    mainWindow.focus();
+  }
+});
 
 // Configure autoUpdater behavior
 autoUpdater.autoDownload = true;
@@ -351,10 +375,10 @@ ipcMain.handle('updater:install', () => {
     console.warn('Error closing windows prior to update:', err.message);
   }
 
-  // Allow OS 300ms to release file handles, then run silent update and force exit
+  // Allow OS 300ms to release file handles, then run update and force exit
   setTimeout(() => {
     try {
-      autoUpdater.quitAndInstall(true, true);
+      autoUpdater.quitAndInstall(false, true);
     } catch (e) {
       console.warn('quitAndInstall error:', e);
     }

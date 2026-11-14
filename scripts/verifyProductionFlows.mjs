@@ -500,8 +500,43 @@ async function runVerification() {
   assert(resetCompany.quotation_next_no === 101, 'Quotation counter reset to 101');
   console.log('✓ TEST 12 PASSED: Database wipe and factory reset verified.\n');
 
+  // 13. Party Registration with Opening Balance (Vendor & Customer Ledger Auto-Entry)
+  console.log('TEST 13: Party Registration with Opening Balance (Vendor & Customer Ledger Auto-Entry)');
+  const testVendorId = 'PARTY_VENDOR_TEST_01';
+  const testCustomerId = 'PARTY_CUST_TEST_01';
+
+  // Vendor with 10,000 opening balance (Radha Drugs owes vendor)
+  run(
+    `INSERT INTO parties (
+      id, party_type, is_gst_registered, gstin, name, legal_name, dl_no, fssai_no,
+      phone, address, city, state_name, state_code, opening_balance, current_balance,
+      credit_limit, gst_status, created_at, updated_at, sync_status
+    ) VALUES (?, 'VENDOR', 0, '', 'TEST VENDOR', 'TEST VENDOR', '', '',
+      '9999999999', 'MAIN ROAD', 'BEGUSARAI', 'BIHAR', '10', 10000, 10000,
+      0, 'UNREGISTERED', '2026-04-06 12:00:00', '2026-04-06 12:00:00', 'PENDING')`,
+    [testVendorId]
+  );
+  run(
+    `INSERT OR REPLACE INTO party_ledger_transactions (
+      id, party_id, transaction_date, voucher_type, voucher_no, reference_id,
+      debit_amount, credit_amount, running_balance, payment_method, narration, created_at
+    ) VALUES (?, ?, '2026-04-06', 'OPENING_BAL', 'OPB-01', '', 0, 10000, 10000, '', 'Opening balance recorded at party registration', '2026-04-06 12:00:00')`,
+    [`LEDGER_OP_${testVendorId}`, testVendorId]
+  );
+
+  const vendorInDb = query('SELECT * FROM parties WHERE id = ?', [testVendorId])[0];
+  assert(vendorInDb.opening_balance === 10000, 'Vendor opening balance is ₹10,000');
+  assert(vendorInDb.current_balance === 10000, 'Vendor current balance is ₹10,000');
+
+  const vendorLedger = query('SELECT * FROM party_ledger_transactions WHERE party_id = ?', [testVendorId]);
+  assert(vendorLedger.length === 1, 'Vendor ledger has 1 opening balance transaction');
+  assert(vendorLedger[0].credit_amount === 10000, 'Vendor ledger credited ₹10,000');
+  assert(vendorLedger[0].voucher_type === 'OPENING_BAL', 'Vendor ledger voucher type is OPENING_BAL');
+
+  console.log('✓ TEST 13 PASSED: Party registration with opening balance & ledger entry verified.\n');
+
   console.log('====================================================');
-  console.log('  ALL 12 VERIFICATION TEST SUITES PASSED (100%)');
+  console.log('  ALL 13 VERIFICATION TEST SUITES PASSED (100%)');
   console.log('====================================================');
 }
 

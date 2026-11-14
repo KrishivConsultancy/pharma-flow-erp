@@ -662,6 +662,11 @@ CREATE TABLE IF NOT EXISTS app_settings (
 
 CREATE INDEX IF NOT EXISTS idx_batches_med ON inventory_batches(medicine_id);
 CREATE INDEX IF NOT EXISTS idx_batches_exp ON inventory_batches(exp_date_iso);
+CREATE INDEX IF NOT EXISTS idx_batches_avail ON inventory_batches(available_qty);
+CREATE INDEX IF NOT EXISTS idx_batches_no ON inventory_batches(batch_no);
+CREATE INDEX IF NOT EXISTS idx_parties_type ON parties(party_type);
+CREATE INDEX IF NOT EXISTS idx_meds_name ON medicines_master(name);
+CREATE INDEX IF NOT EXISTS idx_meds_barcode ON medicines_master(barcode_gtin);
 CREATE INDEX IF NOT EXISTS idx_ledger_party ON party_ledger_transactions(party_id, transaction_date);
 CREATE INDEX IF NOT EXISTS idx_sales_cust ON sales(customer_id, sale_date);
 CREATE INDEX IF NOT EXISTS idx_purchases_vend ON purchases(vendor_id, invoice_date);

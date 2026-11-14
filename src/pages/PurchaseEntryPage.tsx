@@ -106,23 +106,25 @@ export const PurchaseEntryPage: React.FC<PurchaseEntryPageProps> = ({ company })
   useEffect(() => {
     loadMasterData();
     const unsub = dbService.subscribe(loadMasterData);
+    return unsub;
+  }, []);
 
+  const savePurchaseRef = useRef<() => void>(() => {});
+  const addNewRowRef = useRef<() => void>(() => {});
+
+  useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'F10' || (e.altKey && e.key.toLowerCase() === 's')) {
         e.preventDefault();
-        handleSavePurchaseBill();
+        savePurchaseRef.current();
       } else if (e.key === 'F2') {
         e.preventDefault();
-        handleAddNewRow();
+        addNewRowRef.current();
       }
     };
     window.addEventListener('keydown', handleKeyDown);
-
-    return () => {
-      unsub();
-      window.removeEventListener('keydown', handleKeyDown);
-    };
-  }, [items, selectedVendor, supplierInvoiceNo, invoiceDate, paymentMode, amountPaid, notes]);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, []);
 
   const isInterState = selectedVendor ? selectedVendor.state_code !== '10' : true;
 
@@ -506,6 +508,9 @@ export const PurchaseEntryPage: React.FC<PurchaseEntryPageProps> = ({ company })
       toast.error('Failed to save purchase bill: ' + err.message);
     }
   };
+
+  savePurchaseRef.current = handleSavePurchaseBill;
+  addNewRowRef.current = handleAddNewRow;
 
   return (
     <div className="flex-1 overflow-y-auto p-3 space-y-3 bg-slate-100 dark:bg-slate-950 flex flex-col">
@@ -915,7 +920,10 @@ export const PurchaseEntryPage: React.FC<PurchaseEntryPageProps> = ({ company })
           onClose={() => setPartyModalOpen(false)}
           defaultPartyType="VENDOR"
           onSaved={(newVendor) => {
-            setVendors([...vendors, newVendor]);
+            setVendors((prev) => {
+              const exists = prev.some((v) => v.id === newVendor.id);
+              return exists ? prev.map((v) => (v.id === newVendor.id ? newVendor : v)) : [...prev, newVendor];
+            });
             setSelectedVendorId(newVendor.id);
             setSelectedVendor(newVendor);
           }}

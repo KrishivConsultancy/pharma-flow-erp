@@ -1433,7 +1433,10 @@ export const SalesBillingPage: React.FC<SalesBillingPageProps> = ({
           onClose={() => setPartyModalOpen(false)}
           defaultPartyType="CUSTOMER"
           onSaved={(newParty) => {
-            setCustomers([...customers, newParty]);
+            setCustomers((prev) => {
+              const exists = prev.some((c) => c.id === newParty.id);
+              return exists ? prev.map((c) => (c.id === newParty.id ? newParty : c)) : [...prev, newParty];
+            });
             handleSelectCustomer(newParty);
           }}
         />
